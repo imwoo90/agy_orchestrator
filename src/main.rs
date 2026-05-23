@@ -1,1594 +1,1035 @@
-use clap::{Parser, Subcommand};
-use serde::{Deserialize, Serialize};
+use dioxus::prelude::*;
 use std::collections::HashMap;
-use std::fs::{self, File};
-use std::io::{self, Write, Read, BufRead};
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use chrono::Local;
+#[cfg(not(target_arch = "wasm32"))]
+use clap::Parser;
 
-const SYSTEM_INSTRUCTIONS_TEMPLATE: &str = include_str!("system_instructions_template.md");
+mod vault;
+mod state;
+mod issue;
+mod health;
+mod daemon;
+mod upgrade;
+mod cli;
 
-const VAULT_README: &str = "\
-# 🗂️ Personal Knowledge Vault
+use state::ProjectInfo;
+use issue::Issue;
+use health::HealthCheckResult;
 
-This vault stores modular markdown notes containing your assistant's learned memory and habits.
-The assistant queries this database dynamically based on your instructions to load only relevant context on-demand.
-";
-
-const DEFAULT_CODING_PREFS: &str = "\
-# 🎨 Coding Preferences
-
-- **Default stack**: Node.js/JavaScript, TypeScript, Python.
-- **Testing**: Write test cases for critical paths. Prefer TDD.
-";
-
-const DEFAULT_WORKFLOW: &str = "\
-# ⚙️ Workflow Delegation & Approvals
-
-- **Auto-approve**: Dependency installs, compile/build commands, test runs, minor code fixes.
-- **Escalate**: External billing, cloud infrastructure costs, API credentials, unrecoverable system failures.
-";
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct ProjectInfo {
-    path: String,
-    goal: String,
-    pid: u32,
-    status: String,
-    spawned_at: String,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct Issue {
-    id: u32,
-    title: String,
-    body: String,
-    status: String, // "open", "in-progress", "resolved", "failed"
-    created_at: String,
-    resolved_at: Option<String>,
-}
-
-#[derive(Parser, Debug)]
-#[command(name = "orchestrate")]
-#[command(about = "JIT Memory Agent Orchestrator & Knowledge Vault", long_about = None)]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Subcommand, Debug)]
-enum Commands {
-    /// Spawn a new project task in the background
-    Spawn {
-        #[arg(long)]
-        name: String,
-        #[arg(long)]
-        path: String,
-        #[arg(long)]
-        goal: String,
-    },
-    /// List all registered projects and their status
-    List,
-    /// Get status and show report for a specific project
-    Status {
-        #[arg(long)]
-        name: String,
-    },
-    /// Fetch the target project's path and local context for JIT load
-    GetContext {
-        #[arg(long)]
-        name: String,
-    },
-    /// Consolidate the report.md into context.md and update project status
-    Consolidate {
-        #[arg(long)]
-        name: String,
-    },
-    /// Search the personal knowledge vault for relevant context notes
-    QueryMemory {
-        #[arg(long)]
-        query: String,
-    },
-    /// Create or update a note in the personal knowledge vault
-    UpdateMemory {
-        #[arg(long)]
-        topic: String,
-        #[arg(long)]
-        content: String,
-    },
-    /// Manage the background orchestrator daemon
-    Daemon {
-        /// Start the daemon in the background
-        #[arg(long)]
-        start: bool,
-        /// Stop the running background daemon
-        #[arg(long)]
-        stop: bool,
-        /// Check if the daemon is currently running
-        #[arg(long)]
-        status: bool,
-        /// Run the daemon in the foreground (blocking loop)
-        #[arg(long)]
-        run: bool,
-    },
-    /// Test, compile, and hot-reload/upgrade the orchestrator binary and daemon
-    SelfUpgrade {
-        /// Resolve a specific issue ID upon successful upgrade
-        #[arg(long)]
-        resolve_issue: Option<u32>,
-    },
-    /// Manage and register self-evolution issues
-    Issue {
-        /// Create a new issue with a title
-        #[arg(long)]
-        create: Option<String>,
-        /// Body/details of the new issue
-        #[arg(long)]
-        body: Option<String>,
-        /// List registered issues
-        #[arg(long)]
-        list: bool,
-        /// Mark a specific issue as resolved by ID
-        #[arg(long)]
-        resolve: Option<u32>,
-    },
-    /// Start the embedded web dashboard server
-    Dashboard {
-        /// Port to bind the dashboard web server to
-        #[arg(long, default_value_t = 8080)]
-        port: u16,
-    },
-    /// Run a proactive health check on all registered targets
-    HealthCheck,
-}
-
-fn get_base_dir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/wimvm".to_string());
-    PathBuf::from(home).join(".agy_orchestrator")
-}
-
-fn bootstrap_if_needed() -> io::Result<()> {
-    let base_dir = get_base_dir();
-    fs::create_dir_all(&base_dir)?;
-    fs::create_dir_all(base_dir.join("logs"))?;
-    fs::create_dir_all(base_dir.join("memory"))?;
-    
-    let vault_dir = base_dir.join("memory/vault");
-    fs::create_dir_all(&vault_dir)?;
-
-    // 1. Static System Instructions: Always force-overwrite to sync system updates
-    let sys_instructions_path = base_dir.join("memory/system_instructions.md");
-    let mut file = File::create(sys_instructions_path)?;
-    file.write_all(SYSTEM_INSTRUCTIONS_TEMPLATE.as_bytes())?;
-
-    // 2. Vault Default notes (write only if they don't exist to preserve user updates)
-    let readme_path = vault_dir.join("README.md");
-    let mut f_readme = File::create(readme_path)?;
-    f_readme.write_all(VAULT_README.as_bytes())?;
-
-    let coding_prefs_path = vault_dir.join("coding_preferences.md");
-    if !coding_prefs_path.exists() {
-        let mut file = File::create(coding_prefs_path)?;
-        file.write_all(DEFAULT_CODING_PREFS.as_bytes())?;
+async fn sleep_ms(ms: u32) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        gloo_timers::future::TimeoutFuture::new(ms).await;
     }
-
-    let workflow_path = vault_dir.join("workflow_delegation.md");
-    if !workflow_path.exists() {
-        let mut file = File::create(workflow_path)?;
-        file.write_all(DEFAULT_WORKFLOW.as_bytes())?;
-    }
-
-    // 3. Projects JSON state file
-    let projects_path = base_dir.join("projects.json");
-    if !projects_path.exists() {
-        let mut file = File::create(projects_path)?;
-        file.write_all(b"{}")?;
-    }
-
-    // 4. Issues JSON state file
-    let issues_path = base_dir.join("issues.json");
-    if !issues_path.exists() {
-        let mut file = File::create(issues_path)?;
-        file.write_all(b"[]")?;
-    }
-
-    Ok(())
-}
-
-fn load_state() -> HashMap<String, ProjectInfo> {
-    let path = get_base_dir().join("projects.json");
-    if !path.exists() {
-        return HashMap::new();
-    }
-    let file = match File::open(path) {
-        Ok(f) => f,
-        Err(_) => return HashMap::new(),
-    };
-    serde_json::from_reader(file).unwrap_or_else(|_| HashMap::new())
-}
-
-fn save_state(state: &HashMap<String, ProjectInfo>) -> io::Result<()> {
-    let path = get_base_dir().join("projects.json");
-    let file = File::create(path)?;
-    serde_json::to_writer_pretty(file, state)?;
-    Ok(())
-}
-
-fn load_issues() -> Vec<Issue> {
-    let path = get_base_dir().join("issues.json");
-    if !path.exists() {
-        return Vec::new();
-    }
-    let file = match File::open(path) {
-        Ok(f) => f,
-        Err(_) => return Vec::new(),
-    };
-    serde_json::from_reader(file).unwrap_or_else(|_| Vec::new())
-}
-
-fn save_issues(issues: &[Issue]) -> io::Result<()> {
-    let path = get_base_dir().join("issues.json");
-    let file = File::create(path)?;
-    serde_json::to_writer_pretty(file, issues)?;
-    Ok(())
-}
-
-
-fn is_pid_alive(pid: u32) -> bool {
-    let status_path = format!("/proc/{}/status", pid);
-    if let Ok(mut file) = File::open(status_path) {
-        let mut contents = String::new();
-        if file.read_to_string(&mut contents).is_ok() {
-            for line in contents.lines() {
-                if line.starts_with("State:") {
-                    return !line.contains('Z') && !line.contains("zombie");
-                }
-            }
-        }
-    }
-    false
-}
-
-fn check_project_status(_name: &str, info: &mut ProjectInfo) -> String {
-    if info.status != "running" {
-        return info.status.clone();
-    }
-
-    if is_pid_alive(info.pid) {
-        return "running".to_string();
-    }
-
-    // Process is no longer running, check if report.md exists
-    let report_path = Path::new(&info.path).join("report.md");
-    let status = if report_path.exists() {
-        "completed".to_string()
-    } else {
-        "failed".to_string()
-    };
-
-    info.status = status.clone();
-    status
-}
-
-fn get_daemon_pid() -> Option<u32> {
-    let pid_path = get_base_dir().join("daemon.pid");
-    if !pid_path.exists() {
-        return None;
-    }
-    let mut file = File::open(pid_path).ok()?;
-    let mut contents = String::new();
-    file.read_to_string(&mut contents).ok()?;
-    contents.trim().parse::<u32>().ok()
-}
-
-fn is_daemon_running() -> bool {
-    if let Some(pid) = get_daemon_pid() {
-        is_pid_alive(pid)
-    } else {
-        false
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(ms as u64)).await;
     }
 }
 
-fn run_daemon_loop() -> io::Result<()> {
-    let base_dir = get_base_dir();
-    let notifications_path = base_dir.join("notifications.log");
-
-    println!("Orchestrator daemon started in foreground. Monitoring projects...");
-
-    let mut tick_count: u64 = 0;
-
-    loop {
-        tick_count += 1;
-        let mut state = load_state();
-        let mut state_changed = false;
-
-        for (name, info) in state.iter_mut() {
-            if info.status == "running" {
-                if !is_pid_alive(info.pid) {
-                    // Reap zombie process on Unix
-                    #[cfg(unix)]
-                    {
-                        extern "C" {
-                            fn waitpid(pid: i32, status: *mut i32, options: i32) -> i32;
-                        }
-                        let mut status = 0;
-                        unsafe {
-                            waitpid(info.pid as i32, &mut status, 0);
-                        }
-                    }
-
-                    // Process finished!
-                    let report_path = Path::new(&info.path).join("report.md");
-                    let status = if report_path.exists() {
-                        "completed".to_string()
-                    } else {
-                        "failed".to_string()
-                    };
-
-                    info.status = status.clone();
-                    state_changed = true;
-
-                    // Log notification
-                    let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
-                    let mut log_file = fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(&notifications_path)?;
-
-                    if status == "completed" {
-                        let _ = writeln!(
-                            log_file,
-                            "[{}] INFO: Project '{}' task completed successfully.",
-                            timestamp, name
-                        );
-                        
-                        if name.starts_with("self_evolution_issue_") {
-                            if let Some(id_str) = name.strip_prefix("self_evolution_issue_") {
-                                if let Ok(issue_id) = id_str.parse::<u32>() {
-                                    println!("Self-evolution task completed for issue #{}. Launching detached self-upgrade process...", issue_id);
-                                    
-                                    // Clean up report.md
-                                    let _ = fs::remove_file(&report_path);
-
-                                    let current_exe = std::env::current_exe().unwrap_or_default();
-                                    let mut cmd = Command::new(&current_exe);
-                                    cmd.arg("self-upgrade").arg("--resolve-issue").arg(issue_id.to_string());
-                                    
-                                    // Redirect stdout/stderr of upgrade to log to make sure we capture any output
-                                    let upgrade_log_path = base_dir.join("logs").join(format!("self_upgrade_issue_{}.log", issue_id));
-                                    if let Ok(upgrade_log_file) = File::create(&upgrade_log_path) {
-                                        cmd.stdout(Stdio::from(upgrade_log_file.try_clone().unwrap()));
-                                        cmd.stderr(Stdio::from(upgrade_log_file));
-                                    }
-                                    cmd.stdin(Stdio::null());
-
-                                    #[cfg(unix)]
-                                    {
-                                        use std::os::unix::process::CommandExt;
-                                        extern "C" {
-                                            fn setsid() -> i32;
-                                        }
-                                        unsafe {
-                                            cmd.pre_exec(|| {
-                                                setsid();
-                                                Ok(())
-                                            });
-                                        }
-                                    }
-
-                                    match cmd.spawn() {
-                                        Ok(_) => {
-                                            let _ = writeln!(
-                                                log_file,
-                                                "[{}] INFO: Triggered detached self-upgrade for issue #{}.",
-                                                timestamp, issue_id
-                                            );
-                                        }
-                                        Err(e) => {
-                                            eprintln!("Failed to spawn self-upgrade process: {}", e);
-                                            let _ = writeln!(
-                                                log_file,
-                                                "[{}] ERROR: Failed to spawn self-upgrade process for issue #{}: {}.",
-                                                timestamp, issue_id, e
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        } else {
-                            // Auto-consolidate memory
-                            if let Ok(mut report_file) = File::open(&report_path) {
-                                let mut report_content = String::new();
-                                if report_file.read_to_string(&mut report_content).is_ok() {
-                                    let context_path = Path::new(&info.path).join("context.md");
-                                    if let Ok(mut context_file) = fs::OpenOptions::new()
-                                        .create(true)
-                                        .append(true)
-                                        .open(&context_path)
-                                    {
-                                        let _ = writeln!(
-                                            context_file,
-                                            "\n\n# 📅 History log from {} (Auto-consolidated)\n\n{}",
-                                            timestamp, report_content
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        let _ = writeln!(
-                            log_file,
-                            "[{}] ERROR: Project '{}' task failed (no report.md found).",
-                            timestamp, name
-                        );
-
-                        if name.starts_with("self_evolution_issue_") {
-                            if let Some(id_str) = name.strip_prefix("self_evolution_issue_") {
-                                if let Ok(issue_id) = id_str.parse::<u32>() {
-                                    let mut issues = load_issues();
-                                    if let Some(issue) = issues.iter_mut().find(|i| i.id == issue_id) {
-                                        issue.status = "failed".to_string();
-                                        let _ = save_issues(&issues);
-
-                                        // Git rollback
-                                        if let Ok(workspace_root) = find_workspace_root() {
-                                            let _ = Command::new("git").arg("reset").arg("--hard").arg("HEAD").current_dir(&workspace_root).status();
-                                            let _ = Command::new("git").arg("clean").arg("-fd").current_dir(&workspace_root).status();
-                                        }
-
-                                        let _ = writeln!(
-                                            log_file,
-                                            "[{}] ERROR: Self-evolution task failed (no report.md) for issue #{}.",
-                                            timestamp, issue_id
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Check for open issues to evolve
-        let mut evolution_running = false;
-        for (name, info) in state.iter() {
-            if name.starts_with("self_evolution_issue_") && info.status == "running" {
-                evolution_running = true;
-                break;
-            }
-        }
-
-        if !evolution_running {
-            let mut issues = load_issues();
-            if let Some(open_issue) = issues.iter_mut().find(|i| i.status == "open") {
-                let issue_id = open_issue.id;
-                let issue_title = open_issue.title.clone();
-                let issue_body = open_issue.body.clone();
-
-                println!("Daemon detected open issue #{}: '{}'. Spawning self-evolution task...", issue_id, issue_title);
-
-                let task_name = format!("self_evolution_issue_{}", issue_id);
-                if let Ok(workspace_path) = find_workspace_root() {
-                    let workspace_path_str = workspace_path.to_string_lossy().to_string();
-                    let goal = format!(
-                        "You are maintaining the orchestrator codebase. Your task is to resolve the following issue:\n\
-                         Title: {}\n\n\
-                         Description:\n{}\n\n\
-                         Please modify the codebase located at '{}' directly, make sure to add tests and run 'cargo test' to verify your solution compiles and passes tests. Once done, you MUST generate a 'report.md' file.",
-                        issue_title, issue_body, workspace_path_str
-                    );
-
-                    let report_instruction = format!(
-                        "\n\n==================================================\n\
-                         SYSTEM INSTRUCTIONS FOR COMPLETION:\n\
-                         Once you complete your task, you MUST generate a 'report.md' file in the root of the project directory ({})\n\
-                         This report must contain:\n\
-                         1. A summary of completed tasks.\n\
-                         2. Crucial design/architectural choices made.\n\
-                         3. Minor choices resolved autonomously.\n\
-                         4. A section 'CRITICAL ITEMS FOR REVIEW' containing only items that require manual review or escalation (e.g. costs, API keys, blocker errors). If none, clearly state 'None'.\n\
-                         Ensure this report is written before you finish.",
-                        workspace_path_str
-                    );
-
-                    let full_prompt = format!("{}{}", goal, report_instruction);
-                    let log_file_path = base_dir.join("logs").join(format!("{}.log", task_name));
-                    
-                    if let Ok(log_file) = File::create(&log_file_path) {
-                        let mut cmd = Command::new("agy");
-                        cmd.arg("--add-dir")
-                            .arg(&workspace_path_str)
-                            .arg("--dangerously-skip-permissions")
-                            .arg("--print")
-                            .arg(&full_prompt)
-                            .stdout(Stdio::from(log_file.try_clone().unwrap()))
-                            .stderr(Stdio::from(log_file))
-                            .stdin(Stdio::null());
-
-                        #[cfg(unix)]
-                        {
-                            use std::os::unix::process::CommandExt;
-                            extern "C" {
-                                fn setsid() -> i32;
-                            }
-                            unsafe {
-                                cmd.pre_exec(|| {
-                                    setsid();
-                                    Ok(())
-                                });
-                            }
-                        }
-
-                        match cmd.spawn() {
-                            Ok(child) => {
-                                let pid = child.id();
-                                open_issue.status = "in-progress".to_string();
-                                let _ = save_issues(&issues);
-
-                                state.insert(
-                                    task_name.clone(),
-                                    ProjectInfo {
-                                        path: workspace_path_str.clone(),
-                                        goal: goal.clone(),
-                                        pid,
-                                        status: "running".to_string(),
-                                        spawned_at: Local::now().to_rfc3339(),
-                                    },
-                                );
-                                state_changed = true;
-
-                                let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
-                                if let Ok(mut notify_file) = fs::OpenOptions::new()
-                                    .create(true)
-                                    .append(true)
-                                    .open(&notifications_path)
-                                {
-                                    let _ = writeln!(
-                                        notify_file,
-                                        "[{}] INFO: Spawned self-evolution task '{}' for issue #{} (PID: {}).",
-                                        timestamp, task_name, issue_id, pid
-                                    );
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to spawn self-evolution task: {}", e);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        if state_changed {
-            save_state(&state)?;
-        }
-
-        // Run proactive health checks every 12 ticks (~60 seconds)
-        if tick_count % 12 == 0 {
-            println!("[Daemon] Running periodic health checks (tick #{})...", tick_count);
-            match run_health_checks() {
-                Ok(results) => {
-                    let healthy_count = results.iter().filter(|r| r.healthy).count();
-                    let failed_count = results.len() - healthy_count;
-                    if failed_count > 0 {
-                        println!("[Daemon] Health check completed: {} passed, {} FAILED.", healthy_count, failed_count);
-                    } else {
-                        println!("[Daemon] Health check completed: all {} targets healthy.", healthy_count);
-                    }
-                }
-                Err(e) => {
-                    eprintln!("[Daemon] Health check error: {}", e);
-                }
-            }
-        }
-
-        std::thread::sleep(std::time::Duration::from_secs(5));
+// Server Functions
+#[server]
+async fn get_projects() -> Result<HashMap<String, ProjectInfo>, ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Ok(state::load_state())
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
     }
 }
 
-fn find_workspace_root() -> io::Result<PathBuf> {
-    let mut current_dir = std::env::current_exe()?;
-    while current_dir.pop() {
-        if current_dir.join("Cargo.toml").exists() {
-            return Ok(current_dir);
-        }
+#[server]
+async fn get_issues() -> Result<Vec<Issue>, ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Ok(issue::load_issues())
     }
-    Err(io::Error::new(io::ErrorKind::NotFound, "Workspace Cargo.toml not found"))
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct HealthCheckResult {
-    target: String,
-    healthy: bool,
-    message: String,
-    checked_at: String,
+#[server]
+async fn get_logs() -> Result<String, ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let logs_path = vault::get_base_dir().join("notifications.log");
+        let data = std::fs::read_to_string(logs_path).unwrap_or_default();
+        Ok(data)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
 }
 
-
-fn save_health_results(results: &[HealthCheckResult]) -> io::Result<()> {
-    let path = get_base_dir().join("health.json");
-    let file = File::create(path)?;
-    serde_json::to_writer_pretty(file, results)?;
-    Ok(())
-}
-
-fn run_health_checks() -> io::Result<Vec<HealthCheckResult>> {
-    let base_dir = get_base_dir();
-    let notifications_path = base_dir.join("notifications.log");
-    let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-    let mut results: Vec<HealthCheckResult> = Vec::new();
-
-    // 1. Orchestrator self-check
-    if let Ok(workspace_root) = find_workspace_root() {
-        let check_status = Command::new("cargo")
-            .arg("check")
-            .current_dir(&workspace_root)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-
-        let (healthy, msg) = match check_status {
-            Ok(s) if s.success() => (true, "cargo check passed".to_string()),
-            Ok(s) => (false, format!("cargo check failed (exit code: {:?})", s.code())),
-            Err(e) => (false, format!("cargo check error: {}", e)),
-        };
-
-        results.push(HealthCheckResult {
-            target: "orchestrator".to_string(),
-            healthy,
-            message: msg.clone(),
-            checked_at: timestamp.clone(),
-        });
-
-        if let Ok(mut log_file) = fs::OpenOptions::new().create(true).append(true).open(&notifications_path) {
-            if healthy {
-                let _ = writeln!(log_file, "[{}] INFO: Health check PASSED for orchestrator.", timestamp);
-            } else {
-                let _ = writeln!(log_file, "[{}] ERROR: Health check FAILED for orchestrator: {}", timestamp, msg);
-            }
-        }
-
-        // Auto-register issue if orchestrator health check fails
-        if !healthy {
-            let mut issues = load_issues();
-            let already_exists = issues.iter().any(|i| {
-                i.title.starts_with("[Auto-Health] orchestrator") && (i.status == "open" || i.status == "in-progress")
-            });
-            if !already_exists {
-                let next_id = issues.iter().map(|i| i.id).max().unwrap_or(0) + 1;
-                issues.push(Issue {
-                    id: next_id,
-                    title: "[Auto-Health] orchestrator build failure".to_string(),
-                    body: format!("Automated health check detected build failure in the orchestrator codebase.\nError: {}\nPlease investigate and fix the compilation errors.", msg),
-                    status: "open".to_string(),
-                    created_at: Local::now().to_rfc3339(),
-                    resolved_at: None,
-                });
-                let _ = save_issues(&issues);
-                if let Ok(mut log_file) = fs::OpenOptions::new().create(true).append(true).open(&notifications_path) {
-                    let _ = writeln!(log_file, "[{}] INFO: Auto-registered health issue for orchestrator.", timestamp);
-                }
-            }
-        }
-    }
-
-    // 2. Check registered projects
-    let state = load_state();
-    for (name, info) in state.iter() {
-        let project_path = Path::new(&info.path);
-        let (healthy, msg) = if project_path.join("Cargo.toml").exists() {
-            let check_status = Command::new("cargo")
-                .arg("check")
-                .current_dir(project_path)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-            match check_status {
-                Ok(s) if s.success() => (true, "cargo check passed".to_string()),
-                Ok(s) => (false, format!("cargo check failed (exit code: {:?})", s.code())),
-                Err(e) => (false, format!("cargo check error: {}", e)),
-            }
-        } else if project_path.join("package.json").exists() {
-            let check_status = Command::new("npm")
-                .arg("test")
-                .arg("--if-present")
-                .current_dir(project_path)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-            match check_status {
-                Ok(s) if s.success() => (true, "npm test passed".to_string()),
-                Ok(s) => (false, format!("npm test failed (exit code: {:?})", s.code())),
-                Err(e) => (false, format!("npm test error: {}", e)),
-            }
-        } else {
-            (true, "no build system detected (skipped)".to_string())
-        };
-
-        results.push(HealthCheckResult {
-            target: name.clone(),
-            healthy,
-            message: msg.clone(),
-            checked_at: timestamp.clone(),
-        });
-
-        if let Ok(mut log_file) = fs::OpenOptions::new().create(true).append(true).open(&notifications_path) {
-            if healthy {
-                let _ = writeln!(log_file, "[{}] INFO: Health check PASSED for project '{}'.", timestamp, name);
-            } else {
-                let _ = writeln!(log_file, "[{}] ERROR: Health check FAILED for project '{}': {}", timestamp, name, msg);
-            }
-        }
-
-        // Auto-register issue if project health check fails
-        if !healthy {
-            let mut issues = load_issues();
-            let prefix = format!("[Auto-Health] {}", name);
-            let already_exists = issues.iter().any(|i| {
-                i.title.starts_with(&prefix) && (i.status == "open" || i.status == "in-progress")
-            });
-            if !already_exists {
-                let next_id = issues.iter().map(|i| i.id).max().unwrap_or(0) + 1;
-                issues.push(Issue {
-                    id: next_id,
-                    title: format!("[Auto-Health] {} build failure", name),
-                    body: format!("Automated health check detected build failure in project '{}'.\nPath: {}\nError: {}\nPlease investigate and fix the issue.", name, info.path, msg),
-                    status: "open".to_string(),
-                    created_at: Local::now().to_rfc3339(),
-                    resolved_at: None,
-                });
-                let _ = save_issues(&issues);
-                if let Ok(mut log_file) = fs::OpenOptions::new().create(true).append(true).open(&notifications_path) {
-                    let _ = writeln!(log_file, "[{}] INFO: Auto-registered health issue for project '{}'.", timestamp, name);
-                }
-            }
-        }
-    }
-
-    let _ = save_health_results(&results);
-    Ok(results)
-}
-
-
-fn rollback_upgrade(current_exe: &Path, backup_exe: &Path, restart_daemon: bool, reason: &str) -> io::Result<()> {
-    eprintln!("CRITICAL ERROR: {}. Initiating rollback...", reason);
-
-    if backup_exe.exists() {
-        println!("Restoring backup binary...");
-        let _ = fs::remove_file(current_exe);
-        if let Err(e) = fs::rename(backup_exe, current_exe) {
-            eprintln!("Failed to restore backup binary: {}", e);
-            return Err(e);
-        }
-    }
-
-    if restart_daemon {
-        println!("Restarting old daemon...");
-        let _ = Command::new(current_exe)
-            .arg("daemon")
-            .arg("--start")
-            .status();
-    }
-
-    Err(io::Error::new(io::ErrorKind::Other, format!("Upgrade failed and rolled back: {}", reason)))
-}
-
-fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
-    let workspace_root = find_workspace_root()?;
-    println!("Found workspace root: {}", workspace_root.display());
-
-    println!("Running tests via 'cargo test'...");
-    let test_status = Command::new("cargo")
-        .arg("test")
-        .current_dir(&workspace_root)
-        .status()?;
-
-    if !test_status.success() {
-        if let Some(issue_id) = resolve_issue {
-            let mut issues = load_issues();
-            if let Some(issue) = issues.iter_mut().find(|i| i.id == issue_id) {
-                issue.status = "failed".to_string();
-                let _ = save_issues(&issues);
-            }
-            let _ = Command::new("git").arg("reset").arg("--hard").arg("HEAD").current_dir(&workspace_root).status();
-            let _ = Command::new("git").arg("clean").arg("-fd").current_dir(&workspace_root).status();
-        }
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            "Tests failed. Upgrade aborted.",
-        ));
-    }
-    println!("Tests passed successfully!");
-
-    let current_exe = std::env::current_exe()?;
-    let backup_exe = current_exe.with_extension("bak");
-    let new_exe = workspace_root.join("target/release/agy-orchestrator");
-
-    println!("Backing up active binary to {}...", backup_exe.display());
-    if backup_exe.exists() {
-        fs::remove_file(&backup_exe)?;
-    }
-    fs::copy(&current_exe, &backup_exe)?;
-
-    println!("Compiling release binary via 'cargo build --release'...");
-    let build_status = Command::new("cargo")
-        .arg("build")
-        .arg("--release")
-        .current_dir(&workspace_root)
-        .status()?;
-
-    if !build_status.success() {
-        let _ = fs::remove_file(&backup_exe);
-        if let Some(issue_id) = resolve_issue {
-            let mut issues = load_issues();
-            if let Some(issue) = issues.iter_mut().find(|i| i.id == issue_id) {
-                issue.status = "failed".to_string();
-                let _ = save_issues(&issues);
-            }
-            let _ = Command::new("git").arg("reset").arg("--hard").arg("HEAD").current_dir(&workspace_root).status();
-            let _ = Command::new("git").arg("clean").arg("-fd").current_dir(&workspace_root).status();
-        }
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            "Compilation failed. Upgrade aborted.",
-        ));
-    }
-    println!("Compilation completed successfully!");
-
-    if current_exe != new_exe {
-        println!("Installing upgraded binary...");
-        let old_exe = current_exe.with_extension("old");
-        if old_exe.exists() {
-            fs::remove_file(&old_exe)?;
-        }
-        let _ = fs::rename(&current_exe, &old_exe);
-        if let Err(e) = fs::copy(&new_exe, &current_exe) {
-            eprintln!("Failed to copy upgraded binary: {}", e);
-            println!("Restoring stable backup...");
-            let _ = fs::rename(&old_exe, &current_exe);
-            let _ = fs::remove_file(&backup_exe);
-            if let Some(issue_id) = resolve_issue {
-                let mut issues = load_issues();
-                if let Some(issue) = issues.iter_mut().find(|i| i.id == issue_id) {
-                    issue.status = "failed".to_string();
-                    let _ = save_issues(&issues);
-                }
-                let _ = Command::new("git").arg("reset").arg("--hard").arg("HEAD").current_dir(&workspace_root).status();
-                let _ = Command::new("git").arg("clean").arg("-fd").current_dir(&workspace_root).status();
-            }
-            return Err(e);
-        }
-        let _ = fs::remove_file(&old_exe);
-    }
-
-    let daemon_was_running = is_daemon_running();
-    let old_pid = get_daemon_pid();
-
-    let rollback_and_fail_issue = |reason: &str| -> io::Result<()> {
-        if let Some(issue_id) = resolve_issue {
-            let mut issues = load_issues();
-            if let Some(issue) = issues.iter_mut().find(|i| i.id == issue_id) {
-                issue.status = "failed".to_string();
-                let _ = save_issues(&issues);
-            }
-            let _ = Command::new("git").arg("reset").arg("--hard").arg("HEAD").current_dir(&workspace_root).status();
-            let _ = Command::new("git").arg("clean").arg("-fd").current_dir(&workspace_root).status();
-        }
-        rollback_upgrade(&current_exe, &backup_exe, daemon_was_running, reason)
-    };
-
-    // Run basic sanity check on the new binary
-    println!("Performing sanity checks on the new binary...");
-    let sanity_status = Command::new(&current_exe)
-        .arg("--help")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-
-    match sanity_status {
-        Ok(status) if status.success() => {}
-        _ => {
-            return rollback_and_fail_issue("New binary failed basic sanity check --help");
-        }
-    }
-
-    if daemon_was_running {
-        println!("Stopping currently running daemon (PID: {:?})...", old_pid);
-        let stop_status = Command::new(&backup_exe)
-            .arg("daemon")
-            .arg("--stop")
-            .status()?;
-        if !stop_status.success() {
-            eprintln!("Warning: Failed to cleanly stop old daemon process.");
-        }
-
-        println!("Starting upgraded daemon...");
-        let start_status = Command::new(&current_exe)
-            .arg("daemon")
-            .arg("--start")
-            .status()?;
-
-        if !start_status.success() {
-            return rollback_and_fail_issue("Failed to launch new daemon");
-        }
-
-        println!("Waiting 3 seconds for health check...");
-        std::thread::sleep(std::time::Duration::from_secs(3));
-
-        if !is_daemon_running() {
-            return rollback_and_fail_issue("Upgraded daemon crashed immediately on boot");
-        }
-
-        println!("Upgraded daemon is healthy (PID: {:?}).", get_daemon_pid());
-    }
-
-    // Clean up backup binary on successful upgrade
-    if backup_exe.exists() {
-        let _ = fs::remove_file(&backup_exe);
-    }
-
-    // Handle post-upgrade issue resolution and Git staging/committing
-    if let Some(issue_id) = resolve_issue {
-        let mut issues = load_issues();
-        if let Some(issue) = issues.iter_mut().find(|i| i.id == issue_id) {
-            let issue_title = issue.title.clone();
-            issue.status = "resolved".to_string();
-            issue.resolved_at = Some(Local::now().to_rfc3339());
-            save_issues(&issues)?;
-
-            println!("Staging and committing evolution changes to Git...");
-            let _ = Command::new("git").arg("add").arg(".").current_dir(&workspace_root).status();
-            let commit_msg = format!("Auto-evolution: Resolves Issue #{}: {}", issue_id, issue_title);
-            let _ = Command::new("git").arg("commit").arg("-m").arg(&commit_msg).current_dir(&workspace_root).status();
-            
-            if let Ok(output) = Command::new("git").arg("remote").current_dir(&workspace_root).output() {
-                let remote_str = String::from_utf8_lossy(&output.stdout);
-                if !remote_str.trim().is_empty() {
-                    let _ = Command::new("git").arg("push").current_dir(&workspace_root).status();
-                }
-            }
-        }
-    }
-
-    println!("Successfully upgraded to the new version!");
-    Ok(())
-}
-
-fn decode_urlencoded(s: &str) -> String {
-    let mut decoded = String::new();
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c == '+' {
-            decoded.push(' ');
-        } else if c == '%' {
-            let mut hex = String::new();
-            if let Some(h1) = chars.next() { hex.push(h1); }
-            if let Some(h2) = chars.next() { hex.push(h2); }
-            if let Ok(val) = u8::from_str_radix(&hex, 16) {
-                decoded.push(val as char);
-            }
-        } else {
-            decoded.push(c);
-        }
-    }
-    decoded
-}
-
-fn send_response(stream: &mut std::net::TcpStream, status_code: u32, status_text: &str, content_type: &str, body: &[u8]) -> io::Result<()> {
-    let response = format!(
-        "HTTP/1.1 {} {}\r\n\
-         Content-Type: {}; charset=utf-8\r\n\
-         Content-Length: {}\r\n\
-         Access-Control-Allow-Origin: *\r\n\
-         Connection: close\r\n\
-         \r\n",
-        status_code, status_text, content_type, body.len()
-    );
-    stream.write_all(response.as_bytes())?;
-    stream.write_all(body)?;
-    stream.flush()?;
-    Ok(())
-}
-
-fn handle_connection(mut stream: std::net::TcpStream) -> io::Result<()> {
-    let mut reader = io::BufReader::new(&stream);
-    let mut request_line = String::new();
-    if reader.read_line(&mut request_line).is_err() || request_line.is_empty() {
-        return Ok(());
-    }
-
-    let parts: Vec<&str> = request_line.split_whitespace().collect();
-    if parts.len() < 2 {
-        return Ok(());
-    }
-    let method = parts[0];
-    let path = parts[1];
-
-    let mut content_length = 0;
-    loop {
-        let mut header_line = String::new();
-        if reader.read_line(&mut header_line).is_err() || header_line.trim().is_empty() {
-            break;
-        }
-        if header_line.to_lowercase().starts_with("content-length:") {
-            if let Some(len_str) = header_line.split(':').nth(1) {
-                content_length = len_str.trim().parse::<usize>().unwrap_or(0);
-            }
-        }
-    }
-
-    let mut body = vec![0; content_length];
-    if content_length > 0 {
-        if reader.read_exact(&mut body).is_err() {
-            return Ok(());
-        }
-    }
-    let body_str = String::from_utf8_lossy(&body);
-
-    if method == "GET" && path == "/" {
-        let html = include_str!("dashboard.html");
-        send_response(&mut stream, 200, "OK", "text/html", html.as_bytes())?;
-    } else if method == "GET" && path == "/api/projects" {
-        let projects_path = get_base_dir().join("projects.json");
-        let data = fs::read(projects_path).unwrap_or_else(|_| b"{}".to_vec());
-        send_response(&mut stream, 200, "OK", "application/json", &data)?;
-    } else if method == "GET" && path == "/api/issues" {
-        let issues_path = get_base_dir().join("issues.json");
-        let data = fs::read(issues_path).unwrap_or_else(|_| b"[]".to_vec());
-        send_response(&mut stream, 200, "OK", "application/json", &data)?;
-    } else if method == "GET" && path == "/api/logs" {
-        let logs_path = get_base_dir().join("notifications.log");
-        let data = fs::read(logs_path).unwrap_or_else(|_| b"".to_vec());
-        send_response(&mut stream, 200, "OK", "text/plain", &data)?;
-    } else if method == "GET" && path == "/api/vault" {
+#[server]
+async fn get_vault_notes() -> Result<Vec<(String, String)>, ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
         let mut notes = Vec::new();
-        let vault_dir = get_base_dir().join("memory/vault");
-        if let Ok(entries) = fs::read_dir(vault_dir) {
+        let vault_dir = vault::get_base_dir().join("memory/vault");
+        if let Ok(entries) = std::fs::read_dir(vault_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.extension().map_or(false, |ext| ext == "md") {
                     let name = path.file_name().unwrap().to_string_lossy().to_string();
-                    if let Ok(content) = fs::read_to_string(&path) {
-                        notes.push(serde_json::json!({
-                            "name": name,
-                            "content": content
-                        }));
+                    if let Ok(content) = std::fs::read_to_string(&path) {
+                        notes.push((name, content));
                     }
                 }
             }
         }
-        let json = serde_json::to_string_pretty(&notes).unwrap_or_else(|_| "[]".to_string());
-        send_response(&mut stream, 200, "OK", "application/json", json.as_bytes())?;
-    } else if method == "POST" && path == "/api/issue" {
-        let mut title = String::new();
-        let mut body_param = String::new();
-        for param in body_str.split('&') {
-            let kv: Vec<&str> = param.split('=').collect();
-            if kv.len() == 2 {
-                if kv[0] == "title" {
-                    title = decode_urlencoded(kv[1]);
-                } else if kv[0] == "body" {
-                    body_param = decode_urlencoded(kv[1]);
-                }
-            }
-        }
+        Ok(notes)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
+}
 
-        if !title.is_empty() {
-            let mut issues = load_issues();
-            let next_id = issues.iter().map(|i| i.id).max().unwrap_or(0) + 1;
-            issues.push(Issue {
-                id: next_id,
-                title: title.clone(),
-                body: body_param,
-                status: "open".to_string(),
-                created_at: Local::now().to_rfc3339(),
-                resolved_at: None,
-            });
-            let _ = save_issues(&issues);
-            println!("Registered issue #{} '{}' via Web GUI.", next_id, title);
-            send_response(&mut stream, 200, "OK", "application/json", b"{\"status\":\"ok\"}")?;
-        } else {
-            send_response(&mut stream, 400, "Bad Request", "text/plain", b"Missing title")?;
-        }
-    } else if method == "POST" && path == "/api/memory" {
-        let mut topic = String::new();
-        let mut content = String::new();
-        for param in body_str.split('&') {
-            let kv: Vec<&str> = param.split('=').collect();
-            if kv.len() == 2 {
-                if kv[0] == "topic" {
-                    topic = decode_urlencoded(kv[1]);
-                } else if kv[0] == "content" {
-                    content = decode_urlencoded(kv[1]);
-                }
-            }
-        }
+#[server]
+async fn create_issue(title: String, body: String) -> Result<(), ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut issues = issue::load_issues();
+        let next_id = issues.iter().map(|i| i.id).max().unwrap_or(0) + 1;
+        issues.push(Issue {
+            id: next_id,
+            title,
+            body,
+            status: "open".to_string(),
+            created_at: chrono::Local::now().to_rfc3339(),
+            resolved_at: None,
+        });
+        issue::save_issues(&issues).map_err(|e| ServerFnError::new(e.to_string()))?;
+        Ok(())
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
+}
 
-        let sanitized_topic = topic
+#[server]
+async fn save_vault_note(name: String, content: String) -> Result<(), ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let sanitized_topic = name
             .trim()
             .to_lowercase()
             .replace(".md", "")
             .replace(' ', "_")
             .replace(|c: char| !c.is_alphanumeric() && c != '_', "");
 
-        if !sanitized_topic.is_empty() {
-            let vault_dir = get_base_dir().join("memory/vault");
-            let file_path = vault_dir.join(format!("{}.md", sanitized_topic));
-            if let Ok(mut file) = File::create(file_path) {
-                let _ = file.write_all(content.as_bytes());
+        if sanitized_topic.is_empty() {
+            return Err(ServerFnError::new("Invalid note name"));
+        }
+
+        let vault_dir = vault::get_base_dir().join("memory/vault");
+        let file_path = vault_dir.join(format!("{}.md", sanitized_topic));
+        std::fs::write(file_path, content).map_err(|e| ServerFnError::new(e.to_string()))?;
+        Ok(())
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
+}
+
+#[server]
+async fn get_system_health() -> Result<Vec<HealthCheckResult>, ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let health_path = vault::get_base_dir().join("health.json");
+        if health_path.exists() {
+            if let Ok(data) = std::fs::read_to_string(health_path) {
+                if let Ok(results) = serde_json::from_str(&data) {
+                    return Ok(results);
+                }
             }
-            send_response(&mut stream, 200, "OK", "application/json", b"{\"status\":\"ok\"}")?;
+        }
+        Ok(Vec::new())
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
+}
+
+#[server]
+async fn inject_knowledge(project: String, note_name: String) -> Result<(), ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let state = state::load_state();
+        let info = match state.get(&project) {
+            Some(i) => i,
+            None => return Err(ServerFnError::new("Project not found")),
+        };
+
+        let vault_dir = vault::get_base_dir().join("memory/vault");
+        let note_path = vault_dir.join(&note_name);
+        if !note_path.exists() {
+            return Err(ServerFnError::new("Note not found"));
+        }
+
+        let note_content = std::fs::read_to_string(&note_path).map_err(|e| ServerFnError::new(e.to_string()))?;
+        let context_path = std::path::Path::new(&info.path).join("context.md");
+        
+        let mut context_file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&context_path)
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+        use std::io::Write;
+        writeln!(
+            context_file,
+            "\n\n# 🧠 Injected Knowledge from Note '{}' at {}\n\n{}",
+            note_name, timestamp, note_content
+        ).map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        Ok(())
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
+}
+
+#[server]
+async fn get_daemon_status() -> Result<bool, ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Ok(daemon::is_daemon_running())
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
+}
+
+#[server]
+async fn toggle_daemon() -> Result<bool, ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let is_running = daemon::is_daemon_running();
+        if is_running {
+            if let Some(pid) = daemon::get_daemon_pid() {
+                let _ = std::process::Command::new("kill").arg(pid.to_string()).status();
+                let pid_path = vault::get_base_dir().join("daemon.pid");
+                let _ = std::fs::remove_file(pid_path);
+            }
+            Ok(false)
         } else {
-            send_response(&mut stream, 400, "Bad Request", "text/plain", b"Invalid topic")?;
-        }
-    } else if method == "GET" && path == "/api/health" {
-        let health_path = get_base_dir().join("health.json");
-        let data = fs::read(health_path).unwrap_or_else(|_| b"[]".to_vec());
-        send_response(&mut stream, 200, "OK", "application/json", &data)?;
-    } else {
-        send_response(&mut stream, 404, "Not Found", "text/plain", b"Not Found")?;
-    }
-
-    Ok(())
-}
-
-fn run_web_server(port: u16) -> io::Result<()> {
-    let listener = std::net::TcpListener::bind(format!("127.0.0.1:{}", port))?;
-    println!("Orchestrator Web Dashboard running at: http://127.0.0.1:{}", port);
-    for stream in listener.incoming() {
-        if let Ok(stream) = stream {
-            let _ = handle_connection(stream);
+            let current_exe = std::env::current_exe().map_err(|e| ServerFnError::new(e.to_string()))?;
+            let mut cmd = std::process::Command::new(&current_exe);
+            cmd.arg("daemon").arg("--start");
+            cmd.status().map_err(|e| ServerFnError::new(e.to_string()))?;
+            Ok(true)
         }
     }
-    Ok(())
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
 }
 
-fn main() -> io::Result<()> {
-    bootstrap_if_needed()?;
+#[server]
+async fn spawn_project_task(name: String, path: String, goal: String) -> Result<(), ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let cli_struct = cli::Cli {
+            command: cli::Commands::Spawn { name, path, goal }
+        };
+        cli::run_cli(cli_struct).map_err(|e| ServerFnError::new(e.to_string()))?;
+        Ok(())
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
+}
 
-    let cli = Cli::parse();
+fn App() -> Element {
+    let mut active_tab = use_signal(|| "projects".to_string());
+    let mut projects = use_signal(HashMap::new);
+    let mut issues = use_signal(Vec::new);
+    let mut logs = use_signal(String::new);
+    let mut vault_notes = use_signal(Vec::new);
+    let mut system_health = use_signal(Vec::new);
+    let mut daemon_running = use_signal(|| false);
 
-    match cli.command {
-        Commands::Spawn { name, path, goal } => {
-            let base_dir = get_base_dir();
-            let project_path = fs::canonicalize(Path::new(&path))
-                .unwrap_or_else(|_| {
-                    let p = Path::new(&path);
-                    let _ = fs::create_dir_all(p);
-                    fs::canonicalize(p).unwrap_or_else(|_| PathBuf::from(&path))
-                });
-            let project_path_str = project_path.to_string_lossy().to_string();
-
-            let mut state = load_state();
-            if let Some(info) = state.get_mut(&name) {
-                if check_project_status(&name, info) == "running" {
-                    eprintln!("Error: Project '{}' is already running with PID {}.", name, info.pid);
-                    std::process::exit(1);
-                }
+    // Poll data periodically
+    let _fetch_future = use_future(move || async move {
+        loop {
+            if let Ok(p) = get_projects().await {
+                projects.set(p);
             }
-
-            let report_instruction = format!(
-                "\n\n==================================================\n\
-                 SYSTEM INSTRUCTIONS FOR COMPLETION:\n\
-                 Once you complete your task, you MUST generate a 'report.md' file in the root of the project directory ({})\n\
-                 This report must contain:\n\
-                 1. A summary of completed tasks.\n\
-                 2. Crucial design/architectural choices made.\n\
-                 3. Minor choices resolved autonomously.\n\
-                 4. A section 'CRITICAL ITEMS FOR REVIEW' containing only items that require manual review or escalation (e.g. costs, API keys, blocker errors). If none, clearly state 'None'.\n\
-                 Ensure this report is written before you finish.",
-                project_path_str
-            );
-
-            let full_prompt = format!("{}{}", goal, report_instruction);
-            let log_file_path = base_dir.join("logs").join(format!("{}.log", name));
-            let log_file = File::create(&log_file_path)?;
-
-            let mut cmd = Command::new("agy");
-            cmd.arg("--add-dir")
-                .arg(&project_path_str)
-                .arg("--dangerously-skip-permissions")
-                .arg("--print")
-                .arg(&full_prompt)
-                .stdout(Stdio::from(log_file.try_clone()?))
-                .stderr(Stdio::from(log_file))
-                .stdin(Stdio::null());
-
-            #[cfg(unix)]
-            {
-                use std::os::unix::process::CommandExt;
-                extern "C" {
-                    fn setsid() -> i32;
-                }
-                unsafe {
-                    cmd.pre_exec(|| {
-                        setsid();
-                        Ok(())
-                    });
-                }
+            if let Ok(i) = get_issues().await {
+                issues.set(i);
             }
+            if let Ok(l) = get_logs().await {
+                logs.set(l);
+            }
+            if let Ok(vn) = get_vault_notes().await {
+                vault_notes.set(vn);
+            }
+            if let Ok(sh) = get_system_health().await {
+                system_health.set(sh);
+            }
+            if let Ok(dr) = get_daemon_status().await {
+                daemon_running.set(dr);
+            }
+            sleep_ms(3000).await;
+        }
+    });
 
-            let child = cmd.spawn();
+    rsx! {
+        document::Link { rel: "stylesheet", href: asset!("/assets/tailwind.css") }
+        document::Link { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" }
 
-            match child {
-                Ok(c) => {
-                    let pid = c.id();
-                    state.insert(
-                        name.clone(),
-                        ProjectInfo {
-                            path: project_path_str.clone(),
-                            goal: goal.clone(),
-                            pid,
-                            status: "running".to_string(),
-                            spawned_at: Local::now().to_rfc3339(),
+        div { class: "bg-slate-950 text-slate-100 min-h-screen font-sans flex flex-col selection:bg-indigo-500 selection:text-white",
+            // Header Bar
+            header { class: "bg-slate-900/80 backdrop-blur-md border-b border-slate-800/80 px-6 py-4 flex items-center justify-between sticky top-0 z-50",
+                div { class: "flex items-center gap-3",
+                    span { class: "text-2xl", "🤖" }
+                    h1 { class: "text-xl font-bold tracking-tight bg-gradient-to-r from-indigo-400 via-purple-400 to-indigo-300 bg-clip-text text-transparent",
+                        "AGY Orchestrator Dashboard"
+                    }
+                }
+                div { class: "flex items-center gap-4",
+                    div { class: "flex items-center gap-2 bg-slate-950/60 border border-slate-800/80 px-3 py-1.5 rounded-full text-xs font-semibold",
+                        span { class: "text-slate-400", "Daemon Status:" }
+                        if *daemon_running.read() {
+                            span { class: "text-emerald-400 flex items-center gap-1.5",
+                                span { class: "h-2 w-2 rounded-full bg-emerald-400 animate-pulse" }
+                                "RUNNING"
+                            }
+                        } else {
+                            span { class: "text-rose-400 flex items-center gap-1.5",
+                                span { class: "h-2 w-2 rounded-full bg-rose-400" }
+                                "STOPPED"
+                            }
+                        }
+                    }
+                    button {
+                        class: "px-4 py-1.5 rounded-full text-xs font-bold transition-all duration-200 active:scale-95 border "
+                            .to_string() + if *daemon_running.read() {
+                                "bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border-rose-500/20"
+                            } else {
+                                "bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border-emerald-500/20"
+                            },
+                        onclick: move |_| async move {
+                            if let Ok(new_status) = toggle_daemon().await {
+                                daemon_running.set(new_status);
+                            }
                         },
-                    );
-                    save_state(&state)?;
-
-                    println!("Successfully spawned project '{}' in background.", name);
-                    println!("PID: {}", pid);
-                    println!("Logs: {}", log_file_path.canonicalize()?.to_string_lossy());
-                    println!("Target Directory: {}", project_path_str);
-                }
-                Err(e) => {
-                    eprintln!("Failed to spawn agy command: {}", e);
-                    std::process::exit(1);
-                }
-            }
-        }
-        Commands::List => {
-            let mut state = load_state();
-            if state.is_empty() {
-                println!("No projects registered.");
-                return Ok(());
-            }
-
-            println!(
-                "{:<15} | {:<6} | {:<10} | {:<20} | {}",
-                "Project Name", "PID", "Status", "Spawned At", "Path"
-            );
-            println!("{}", "-".repeat(80));
-
-            for (name, info) in state.iter_mut() {
-                let status = check_project_status(name, info);
-                let spawned = info.spawned_at.get(..19).unwrap_or(&info.spawned_at).replace('T', " ");
-                println!(
-                    "{:<15} | {:<6} | {:<10} | {:<20} | {}",
-                    name, info.pid, status, spawned, info.path
-                );
-            }
-            save_state(&state)?;
-        }
-        Commands::Status { name } => {
-            let mut state = load_state();
-            
-            let (status, path_str, pid, spawned_at, goal) = {
-                let info = match state.get_mut(&name) {
-                    Some(i) => i,
-                    None => {
-                        eprintln!("Error: Project '{}' not found.", name);
-                        std::process::exit(1);
+                        if *daemon_running.read() { "Stop Daemon" } else { "Start Daemon" }
                     }
-                };
-                let status = check_project_status(&name, info);
-                (status, info.path.clone(), info.pid, info.spawned_at.clone(), info.goal.clone())
-            };
-            
-            save_state(&state)?;
+                }
+            }
 
-            println!("Project: {}", name);
-            println!("Path: {}", path_str);
-            println!("Status: {}", status);
-            println!("PID: {}", pid);
-            println!("Spawned At: {}", spawned_at);
-            println!("Goal: {}", goal);
+            // Main Body Area
+            div { class: "flex-1 flex overflow-hidden",
+                // Sidebar Navigation
+                nav { class: "w-64 bg-slate-900/40 border-r border-slate-850 p-4 flex flex-col gap-2 shrink-0",
+                    button {
+                        class: "flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 "
+                            .to_string() + if *active_tab.read() == "projects" {
+                                "bg-indigo-600/20 text-indigo-200 border-l-4 border-indigo-500"
+                            } else {
+                                "hover:bg-slate-800/50 text-slate-400 hover:text-slate-200 border-l-4 border-transparent"
+                            },
+                        onclick: move |_| active_tab.set("projects".to_string()),
+                        span { "📂" }
+                        "Active Projects"
+                    }
+                    button {
+                        class: "flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 "
+                            .to_string() + if *active_tab.read() == "issues" {
+                                "bg-indigo-600/20 text-indigo-200 border-l-4 border-indigo-500"
+                            } else {
+                                "hover:bg-slate-800/50 text-slate-400 hover:text-slate-200 border-l-4 border-transparent"
+                            },
+                        onclick: move |_| active_tab.set("issues".to_string()),
+                        span { "📋" }
+                        "Kanban Issues"
+                    }
+                    button {
+                        class: "flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 "
+                            .to_string() + if *active_tab.read() == "vault" {
+                                "bg-indigo-600/20 text-indigo-200 border-l-4 border-indigo-500"
+                            } else {
+                                "hover:bg-slate-800/50 text-slate-400 hover:text-slate-200 border-l-4 border-transparent"
+                            },
+                        onclick: move |_| active_tab.set("vault".to_string()),
+                        span { "🗂️" }
+                        "Knowledge Vault"
+                    }
+                    button {
+                        class: "flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 "
+                            .to_string() + if *active_tab.read() == "logs" {
+                                "bg-indigo-600/20 text-indigo-200 border-l-4 border-indigo-500"
+                            } else {
+                                "hover:bg-slate-800/50 text-slate-400 hover:text-slate-200 border-l-4 border-transparent"
+                            },
+                        onclick: move |_| active_tab.set("logs".to_string()),
+                        span { "📟" }
+                        "Live Logs"
+                    }
+                }
 
-            let report_path = Path::new(&path_str).join("report.md");
-            if report_path.exists() {
-                println!("\n--- [report.md Content] ---");
-                let mut report_content = String::new();
-                File::open(report_path)?.read_to_string(&mut report_content)?;
-                println!("{}", report_content);
+                // Tab Content Panel
+                main { class: "flex-1 overflow-y-auto p-8",
+                    match active_tab.read().as_str() {
+                        "projects" => rsx! {
+                            ProjectsTab {
+                                projects: projects.clone(),
+                                system_health: system_health.clone()
+                            }
+                        },
+                        "issues" => rsx! {
+                            IssuesTab {
+                                issues: issues.clone()
+                            }
+                        },
+                        "vault" => rsx! {
+                            VaultTab {
+                                vault_notes: vault_notes.clone(),
+                                projects: projects.clone()
+                            }
+                        },
+                        "logs" => rsx! {
+                            LogsTab {
+                                logs: logs.clone()
+                            }
+                        },
+                        _ => rsx! { div { "Unknown tab" } }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn ProjectsTab(
+    projects: Signal<HashMap<String, ProjectInfo>>,
+    system_health: Signal<Vec<HealthCheckResult>>
+) -> Element {
+    let mut show_modal = use_signal(|| false);
+    let mut name = use_signal(String::new);
+    let mut path = use_signal(String::new);
+    let mut goal = use_signal(String::new);
+    let mut status_msg = use_signal(String::new);
+
+    let projects_map = projects.read();
+
+    rsx! {
+        div { class: "flex flex-col gap-6",
+            div { class: "flex items-center justify-between",
+                div {
+                    h2 { class: "text-2xl font-bold text-slate-100", "Projects & Agent Targets" }
+                    p { class: "text-sm text-slate-400 mt-1", "Monitor background agent statuses and trigger new autonomous tasks." }
+                }
+                button {
+                    class: "px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold transition-all duration-200 shadow-lg shadow-indigo-900/40 hover:shadow-indigo-900/60 active:scale-95 flex items-center gap-2",
+                    onclick: move |_| show_modal.set(true),
+                    span { class: "text-lg", "+" }
+                    "New Task"
+                }
+            }
+
+            // Projects List
+            if projects_map.is_empty() {
+                div { class: "bg-slate-900/30 border border-slate-850 rounded-2xl p-12 text-center flex flex-col items-center gap-3",
+                    span { class: "text-4xl", "📭" }
+                    h3 { class: "font-semibold text-slate-300 text-lg", "No projects registered" }
+                    p { class: "text-slate-500 text-sm max-w-sm", "Spawn your first project target to start executing agent tasks." }
+                }
             } else {
-                println!("\nReport file not found at: {}", report_path.display());
-                if status == "failed" {
-                    let base_dir = get_base_dir();
-                    println!("Note: Project failed. Check logs for details: {}", base_dir.join("logs").join(format!("{}.log", name)).display());
-                }
-            }
-        }
-        Commands::GetContext { name } => {
-            let mut state = load_state();
-            
-            let (status, path_str) = {
-                let info = match state.get_mut(&name) {
-                    Some(i) => i,
-                    None => {
-                        eprintln!("Error: Project '{}' not found.", name);
-                        std::process::exit(1);
-                    }
-                };
-                let status = check_project_status(&name, info);
-                (status, info.path.clone())
-            };
-            
-            save_state(&state)?;
+                div { class: "grid grid-cols-1 xl:grid-cols-2 gap-6",
+                    for (proj_name, info) in projects_map.iter() {
+                        div { class: "bg-slate-900/50 backdrop-blur-md border border-slate-800/80 rounded-2xl p-6 flex flex-col justify-between hover:border-slate-700/60 transition-all duration-200 shadow-lg shadow-slate-950/20",
+                            div { class: "flex flex-col gap-4",
+                                div { class: "flex items-start justify-between",
+                                    div { class: "flex flex-col gap-1",
+                                        h3 { class: "text-lg font-bold text-slate-200", "{proj_name}" }
+                                        span { class: "text-xs font-mono text-slate-500", "PID: {info.pid}" }
+                                    }
+                                    // Status Badge
+                                    span {
+                                        class: "px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider "
+                                            .to_string() + match info.status.as_str() {
+                                                "running" => "bg-sky-500/10 text-sky-400 border border-sky-500/20 animate-pulse",
+                                                "completed" => "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20",
+                                                "failed" => "bg-rose-500/10 text-rose-400 border border-rose-500/20",
+                                                _ => "bg-slate-800 text-slate-400"
+                                            },
+                                        "{info.status}"
+                                    }
+                                }
 
-            println!("Project: {}", name);
-            println!("Path: {}", path_str);
-            println!("Status: {}", status);
+                                div { class: "bg-slate-950/60 border border-slate-850 rounded-xl p-4 flex flex-col gap-1.5",
+                                    span { class: "text-xs font-semibold text-slate-400 uppercase tracking-wider", "Current Goal" }
+                                    p { class: "text-sm text-slate-300 line-clamp-3 leading-relaxed", "{info.goal}" }
+                                }
 
-            let context_path = Path::new(&path_str).join("context.md");
-            if context_path.exists() {
-                println!("\n--- [context.md Content] ---");
-                let mut context_content = String::new();
-                File::open(context_path)?.read_to_string(&mut context_content)?;
-                println!("{}", context_content);
-            } else {
-                println!("\nNo context.md file exists yet in the project directory.");
-            }
-        }
-        Commands::Consolidate { name } => {
-            let mut state = load_state();
-            
-            let (path_str, spawned_at) = {
-                let info = match state.get_mut(&name) {
-                    Some(i) => i,
-                    None => {
-                        eprintln!("Error: Project '{}' not found.", name);
-                        std::process::exit(1);
-                    }
-                };
+                                div { class: "flex flex-col gap-1",
+                                    span { class: "text-xs font-semibold text-slate-500", "Workspace Path" }
+                                    span { class: "text-xs font-mono text-slate-400 truncate bg-slate-950/30 px-2 py-1 rounded border border-slate-900/80", "{info.path}" }
+                                }
+                            }
 
-                let status = check_project_status(&name, info);
-                if status == "running" {
-                    eprintln!("Error: Cannot consolidate project '{}' while it is still running.", name);
-                    std::process::exit(1);
-                }
-
-                info.status = "completed".to_string();
-                (info.path.clone(), info.spawned_at.clone())
-            };
-
-            let report_path = Path::new(&path_str).join("report.md");
-            if !report_path.exists() {
-                eprintln!("Error: report.md not found at {}. Cannot consolidate.", report_path.display());
-                std::process::exit(1);
-            }
-
-            let mut report_content = String::new();
-            File::open(&report_path)?.read_to_string(&mut report_content)?;
-
-            let context_path = Path::new(&path_str).join("context.md");
-            let mut context_file = fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&context_path)?;
-
-            let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
-            writeln!(
-                context_file,
-                "\n\n# 📅 History log from {} (Spawned at {})\n\n{}",
-                timestamp, spawned_at, report_content
-            )?;
-
-            save_state(&state)?;
-
-            println!("Successfully consolidated report.md into context.md for project '{}'.", name);
-            println!("Updated status to 'completed' in projects.json.");
-        }
-        Commands::QueryMemory { query } => {
-            let vault_dir = get_base_dir().join("memory/vault");
-            if !vault_dir.exists() {
-                println!("Memory vault directory not found.");
-                return Ok(());
-            }
-
-            let query_lower = query.to_lowercase();
-            let mut found_any = false;
-
-            let entries = fs::read_dir(vault_dir)?;
-            for entry in entries {
-                let entry = entry?;
-                let path = entry.path();
-                
-                if path.extension().map_or(false, |ext| ext == "md") {
-                    let filename = path.file_name().unwrap().to_string_lossy().to_string();
-                    let mut file_content = String::new();
-                    
-                    if let Ok(mut file) = File::open(&path) {
-                        if file.read_to_string(&mut file_content).is_ok() {
-                            let match_in_name = filename.to_lowercase().contains(&query_lower);
-                            let match_in_content = file_content.to_lowercase().contains(&query_lower);
-                            
-                            if match_in_name || match_in_content {
-                                found_any = true;
-                                println!("\n==================================================");
-                                println!("📂 Note: {}", filename);
-                                println!("--------------------------------------------------");
-                                println!("{}", file_content.trim());
+                            // Footer with Health check details
+                            div { class: "mt-6 pt-4 border-t border-slate-850 flex items-center justify-between",
+                                span { class: "text-xs text-slate-500", "Spawned: {info.spawned_at.get(..19).unwrap_or(&info.spawned_at).replace('T', \" \")}" }
+                                
+                                // Health status
+                                if let Some(health) = system_health.read().iter().find(|h| h.target == *proj_name) {
+                                    if health.healthy {
+                                        span { class: "text-xs font-semibold text-emerald-400 flex items-center gap-1",
+                                            "✅ OK"
+                                        }
+                                    } else {
+                                        span {
+                                            class: "text-xs font-semibold text-rose-400 flex items-center gap-1 cursor-help",
+                                            title: "{health.message}",
+                                            "❌ FAIL"
+                                        }
+                                    }
+                                } else {
+                                    span { class: "text-xs text-slate-400 font-medium", "⏳ Pending" }
+                                }
                             }
                         }
                     }
                 }
             }
 
-            if !found_any {
-                println!("No matching memory notes found in the vault for query: '{}'", query);
-            }
-        }
-        Commands::UpdateMemory { topic, content } => {
-            let vault_dir = get_base_dir().join("memory/vault");
-            fs::create_dir_all(&vault_dir)?;
+            // Task Spawn Modal
+            if *show_modal.read() {
+                div { class: "fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm transition-all duration-300",
+                    div { class: "w-full max-w-lg bg-slate-900 border border-slate-800/80 rounded-2xl shadow-2xl p-6 flex flex-col gap-4 animate-in fade-in-50 zoom-in-95",
+                        div { class: "flex items-center justify-between border-b border-slate-800 pb-3",
+                            h3 { class: "text-lg font-bold text-slate-100", "Spawn New Autonomous Task" }
+                            button {
+                                class: "text-slate-400 hover:text-slate-200 transition-colors",
+                                onclick: move |_| {
+                                    show_modal.set(false);
+                                    status_msg.set(String::new());
+                                },
+                                "✕"
+                            }
+                        }
 
-            let sanitized_topic = topic
-                .trim()
-                .to_lowercase()
-                .replace(' ', "_")
-                .replace(|c: char| !c.is_alphanumeric() && c != '_', "");
-            
-            if sanitized_topic.is_empty() {
-                eprintln!("Error: Invalid topic name.");
-                std::process::exit(1);
-            }
+                        div { class: "flex flex-col gap-3",
+                            div { class: "flex flex-col gap-1",
+                                label { class: "text-xs font-semibold text-slate-400", "Project Name" }
+                                input {
+                                    class: "w-full bg-slate-950/85 border border-slate-800 focus:border-indigo-500 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 outline-none transition-all",
+                                    placeholder: "e.g., custom_crawler",
+                                    value: "{name}",
+                                    oninput: move |e| name.set(e.value())
+                                }
+                            }
+                            div { class: "flex flex-col gap-1",
+                                label { class: "text-xs font-semibold text-slate-400", "Directory Path" }
+                                input {
+                                    class: "w-full bg-slate-950/85 border border-slate-800 focus:border-indigo-500 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 outline-none transition-all",
+                                    placeholder: "e.g., /home/wimvm/works/my_project",
+                                    value: "{path}",
+                                    oninput: move |e| path.set(e.value())
+                                }
+                            }
+                            div { class: "flex flex-col gap-1",
+                                label { class: "text-xs font-semibold text-slate-400", "Goal & Objectives" }
+                                textarea {
+                                    class: "w-full bg-slate-950/85 border border-slate-800 focus:border-indigo-500 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 outline-none transition-all h-28 resize-none",
+                                    placeholder: "Explain the details of what the agent needs to achieve...",
+                                    value: "{goal}",
+                                    oninput: move |e| goal.set(e.value())
+                                }
+                            }
+                        }
 
-            let file_path = vault_dir.join(format!("{}.md", sanitized_topic));
-            let mut file = File::create(&file_path)?;
-            file.write_all(content.as_bytes())?;
+                        if !status_msg.read().is_empty() {
+                            p { class: "text-xs text-rose-400 font-semibold bg-rose-500/10 border border-rose-500/20 px-3 py-2 rounded-lg",
+                                "{status_msg}"
+                            }
+                        }
 
-            println!("Successfully updated memory note: {}", file_path.display());
-        }
-        Commands::Daemon { start, stop, status, run } => {
-            let base_dir = get_base_dir();
-            let pid_path = base_dir.join("daemon.pid");
-
-            if run {
-                run_daemon_loop()?;
-            } else if start {
-                if is_daemon_running() {
-                    let pid = get_daemon_pid().unwrap();
-                    println!("Daemon is already running with PID: {}", pid);
-                    return Ok(());
-                }
-
-                let current_exe = std::env::current_exe()?;
-                let mut cmd = Command::new(&current_exe);
-                cmd.arg("daemon").arg("--run");
-
-                // Redirect stdout/stderr to a daemon log file to avoid panic on broken pipe
-                let daemon_log_path = base_dir.join("daemon.log");
-                let daemon_log_file = File::create(&daemon_log_path)?;
-                cmd.stdout(Stdio::from(daemon_log_file.try_clone()?));
-                cmd.stderr(Stdio::from(daemon_log_file));
-                cmd.stdin(Stdio::null());
-
-                // Detach process on Unix
-                #[cfg(unix)]
-                {
-                    use std::os::unix::process::CommandExt;
-                    extern "C" {
-                        fn setsid() -> i32;
+                        div { class: "flex justify-end gap-3 mt-4",
+                            button {
+                                class: "px-4 py-2 text-sm font-semibold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700/80 transition-all",
+                                onclick: move |_| {
+                                    show_modal.set(false);
+                                    status_msg.set(String::new());
+                                },
+                                "Cancel"
+                            }
+                            button {
+                                class: "px-4 py-2 text-sm font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-900/30 transition-all",
+                                onclick: move |_| async move {
+                                    if name.read().is_empty() || path.read().is_empty() || goal.read().is_empty() {
+                                        status_msg.set("Please fill in all inputs.".to_string());
+                                        return;
+                                    }
+                                    let name_val = name.read().clone();
+                                    let path_val = path.read().clone();
+                                    let goal_val = goal.read().clone();
+                                    if let Err(e) = spawn_project_task(name_val, path_val, goal_val).await {
+                                        status_msg.set(format!("Failed to spawn: {}", e));
+                                    } else {
+                                        show_modal.set(false);
+                                        name.set(String::new());
+                                        path.set(String::new());
+                                        goal.set(String::new());
+                                        status_msg.set(String::new());
+                                        if let Ok(p) = get_projects().await {
+                                            projects.set(p);
+                                        }
+                                    }
+                                },
+                                "Spawn Process"
+                            }
+                        }
                     }
-                    unsafe {
-                        cmd.pre_exec(|| {
-                            setsid();
-                            Ok(())
-                        });
-                    }
                 }
-
-                let child = cmd.spawn()?;
-                let pid = child.id();
-
-                let mut file = File::create(&pid_path)?;
-                write!(file, "{}", pid)?;
-
-                println!("Orchestrator daemon started in background (PID: {}).", pid);
-            } else if stop {
-                if !is_daemon_running() {
-                    println!("Daemon is not running.");
-                    return Ok(());
-                }
-
-                let pid = get_daemon_pid().unwrap();
-                println!("Stopping daemon (PID: {})...", pid);
-
-                // Kill process on Unix
-                let _ = Command::new("kill").arg(pid.to_string()).status();
-                let _ = fs::remove_file(&pid_path);
-
-                println!("Daemon stopped successfully.");
-            } else if status {
-                if is_daemon_running() {
-                    let pid = get_daemon_pid().unwrap();
-                    println!("Daemon is RUNNING (PID: {}).", pid);
-                } else {
-                    println!("Daemon is STOPPED.");
-                }
-            } else {
-                println!("Please specify --start, --stop, or --status.");
             }
         }
-        Commands::SelfUpgrade { resolve_issue } => {
-            run_self_upgrade(resolve_issue)?;
+    }
+}
+
+#[component]
+fn IssuesTab(issues: Signal<Vec<Issue>>) -> Element {
+    let mut show_create_modal = use_signal(|| false);
+    let mut new_title = use_signal(String::new);
+    let mut new_body = use_signal(String::new);
+    let mut error_msg = use_signal(String::new);
+
+    let issues_list = issues.read();
+
+    // Group issues by status
+    let mut open_issues = Vec::new();
+    let mut in_progress_issues = Vec::new();
+    let mut resolved_issues = Vec::new();
+    let mut failed_issues = Vec::new();
+
+    for issue in issues_list.iter() {
+        match issue.status.as_str() {
+            "open" => open_issues.push(issue.clone()),
+            "in-progress" => in_progress_issues.push(issue.clone()),
+            "resolved" => resolved_issues.push(issue.clone()),
+            "failed" => failed_issues.push(issue.clone()),
+            _ => open_issues.push(issue.clone()),
         }
-        Commands::Issue { create, body, list, resolve } => {
-            let mut issues = load_issues();
-            if list {
+    }
+
+    rsx! {
+        div { class: "flex flex-col gap-6",
+            div { class: "flex items-center justify-between",
+                div {
+                    h2 { class: "text-2xl font-bold text-slate-100", "Evolution Kanban Board" }
+                    p { class: "text-sm text-slate-400 mt-1", "Track issues that the daemon will auto-heal and resolve." }
+                }
+                button {
+                    class: "px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold transition-all duration-200 shadow-lg shadow-indigo-900/40 active:scale-95 flex items-center gap-2",
+                    onclick: move |_| show_create_modal.set(true),
+                    span { class: "text-lg", "+" }
+                    "New Issue"
+                }
+            }
+
+            // Kanban columns
+            div { class: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-start",
+                KanbanColumn {
+                    title: "Open",
+                    header_bg: "bg-amber-500/10 border-amber-500/20 text-amber-400",
+                    badge_bg: "bg-amber-500/10 text-amber-400",
+                    issues: open_issues
+                }
+                KanbanColumn {
+                    title: "In Progress",
+                    header_bg: "bg-sky-500/10 border-sky-500/20 text-sky-400",
+                    badge_bg: "bg-sky-500/10 text-sky-400 animate-pulse",
+                    issues: in_progress_issues
+                }
+                KanbanColumn {
+                    title: "Resolved",
+                    header_bg: "bg-emerald-500/10 border-emerald-500/20 text-emerald-400",
+                    badge_bg: "bg-emerald-500/10 text-emerald-400",
+                    issues: resolved_issues
+                }
+                KanbanColumn {
+                    title: "Failed",
+                    header_bg: "bg-rose-500/10 border-rose-500/20 text-rose-400",
+                    badge_bg: "bg-rose-500/10 text-rose-400",
+                    issues: failed_issues
+                }
+            }
+
+            // Create Issue Modal
+            if *show_create_modal.read() {
+                div { class: "fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm",
+                    div { class: "w-full max-w-md bg-slate-900 border border-slate-800/80 rounded-2xl shadow-2xl p-6 flex flex-col gap-4 animate-in fade-in-50 zoom-in-95",
+                        div { class: "flex items-center justify-between border-b border-slate-800 pb-3",
+                            h3 { class: "text-lg font-bold text-slate-100", "Submit Evolution Issue" }
+                            button {
+                                class: "text-slate-400 hover:text-slate-200 transition-colors",
+                                onclick: move |_| {
+                                    show_create_modal.set(false);
+                                    error_msg.set(String::new());
+                                },
+                                "✕"
+                            }
+                        }
+
+                        div { class: "flex flex-col gap-3",
+                            div { class: "flex flex-col gap-1",
+                                label { class: "text-xs font-semibold text-slate-400", "Issue Title" }
+                                input {
+                                    class: "w-full bg-slate-950/85 border border-slate-800 focus:border-indigo-500 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 outline-none transition-all",
+                                    placeholder: "e.g., Fix compilation warnings",
+                                    value: "{new_title}",
+                                    oninput: move |e| new_title.set(e.value())
+                                }
+                            }
+                            div { class: "flex flex-col gap-1",
+                                label { class: "text-xs font-semibold text-slate-400", "Issue Description" }
+                                textarea {
+                                    class: "w-full bg-slate-950/85 border border-slate-800 focus:border-indigo-500 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 outline-none transition-all h-28 resize-none",
+                                    placeholder: "Write out what compile flags, bugs, or missing features to resolve...",
+                                    value: "{new_body}",
+                                    oninput: move |e| new_body.set(e.value())
+                                }
+                            }
+                        }
+
+                        if !error_msg.read().is_empty() {
+                            p { class: "text-xs text-rose-400 font-semibold bg-rose-500/10 border border-rose-500/20 px-3 py-2 rounded-lg",
+                                "{error_msg}"
+                            }
+                        }
+
+                        div { class: "flex justify-end gap-3 mt-4",
+                            button {
+                                class: "px-4 py-2 text-sm font-semibold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700/80 transition-all",
+                                onclick: move |_| {
+                                    show_create_modal.set(false);
+                                    error_msg.set(String::new());
+                                },
+                                "Cancel"
+                            }
+                            button {
+                                class: "px-4 py-2 text-sm font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-900/30 transition-all",
+                                onclick: move |_| async move {
+                                    if new_title.read().is_empty() {
+                                        error_msg.set("Title is required.".to_string());
+                                        return;
+                                    }
+                                    let title_val = new_title.read().clone();
+                                    let body_val = new_body.read().clone();
+                                    if let Err(e) = create_issue(title_val, body_val).await {
+                                        error_msg.set(format!("Failed to save: {}", e));
+                                    } else {
+                                        show_create_modal.set(false);
+                                        new_title.set(String::new());
+                                        new_body.set(String::new());
+                                        error_msg.set(String::new());
+                                        if let Ok(i) = get_issues().await {
+                                            issues.set(i);
+                                        }
+                                    }
+                                },
+                                "Create Issue"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn KanbanColumn(
+    title: &'static str,
+    header_bg: &'static str,
+    badge_bg: &'static str,
+    issues: Vec<Issue>
+) -> Element {
+    rsx! {
+        div { class: "bg-slate-900/30 border border-slate-850 rounded-2xl p-4 flex flex-col gap-4 min-h-[400px]",
+            div { class: format!("px-4 py-2.5 rounded-xl border flex items-center justify-between font-bold {}", header_bg),
+                span { "{title}" }
+                span { class: format!("text-xs px-2 py-0.5 rounded-full {}", badge_bg),
+                    "{issues.len()}"
+                }
+            }
+
+            div { class: "flex flex-col gap-3 overflow-y-auto max-h-[600px] scrollbar-thin scrollbar-thumb-slate-800",
                 if issues.is_empty() {
-                    println!("No registered issues found.");
+                    div { class: "text-center py-8 text-xs text-slate-500 font-medium border border-dashed border-slate-850 rounded-xl",
+                        "No issues"
+                    }
                 } else {
-                    println!("{:<5} | {:<25} | {:<12} | {:<20} | {}", "ID", "Title", "Status", "Created At", "Body");
-                    println!("{}", "-".repeat(95));
-                    for issue in &issues {
-                        let created = issue.created_at.get(..19).unwrap_or(&issue.created_at).replace('T', " ");
-                        let body_truncated = if issue.body.len() > 30 {
-                            format!("{}...", &issue.body[..27])
-                        } else {
-                            issue.body.clone()
-                        };
-                        println!(
-                            "{:<5} | {:<25} | {:<12} | {:<20} | {}",
-                            issue.id, issue.title, issue.status, created, body_truncated
-                        );
+                    for issue in issues.iter() {
+                        div { class: "bg-slate-900/60 border border-slate-850 hover:border-slate-800/80 rounded-xl p-4 flex flex-col gap-3 shadow-sm hover:shadow-md transition-all duration-200",
+                            div { class: "flex flex-col gap-1.5",
+                                h4 { class: "font-semibold text-slate-200 text-sm leading-snug", "{issue.title}" }
+                                p { class: "text-xs text-slate-400 line-clamp-2 leading-relaxed", "{issue.body}" }
+                            }
+                            div { class: "flex items-center justify-between border-t border-slate-850 pt-2.5 text-[10px] text-slate-500",
+                                span { "ID: #{issue.id}" }
+                                span { "{issue.created_at.get(..10).unwrap_or(\"\")}" }
+                            }
+                        }
                     }
                 }
-            } else if let Some(title) = create {
-                let next_id = issues.iter().map(|i| i.id).max().unwrap_or(0) + 1;
-                let body_str = body.unwrap_or_else(|| "".to_string());
-                let new_issue = Issue {
-                    id: next_id,
-                    title: title.clone(),
-                    body: body_str,
-                    status: "open".to_string(),
-                    created_at: Local::now().to_rfc3339(),
-                    resolved_at: None,
-                };
-                issues.push(new_issue);
-                save_issues(&issues)?;
-                println!("Successfully registered issue #{} '{}'.", next_id, title);
-            } else if let Some(id) = resolve {
-                if let Some(issue) = issues.iter_mut().find(|i| i.id == id) {
-                    issue.status = "resolved".to_string();
-                    issue.resolved_at = Some(Local::now().to_rfc3339());
-                    save_issues(&issues)?;
-                    println!("Successfully marked issue #{} as resolved.", id);
-                } else {
-                    eprintln!("Error: Issue #{} not found.", id);
-                    std::process::exit(1);
-                }
-            } else {
-                println!("Please specify --create, --list, or --resolve.");
             }
         }
-        Commands::Dashboard { port } => {
-            run_web_server(port)?;
-        }
-        Commands::HealthCheck => {
-            println!("Running health checks on all registered targets...\n");
-            match run_health_checks() {
-                Ok(results) => {
-                    println!("{:<25} | {:<8} | {:<20} | {}", "Target", "Status", "Checked At", "Message");
-                    println!("{}", "-".repeat(90));
-                    for r in &results {
-                        let status = if r.healthy { "✅ OK" } else { "❌ FAIL" };
-                        println!("{:<25} | {:<8} | {:<20} | {}", r.target, status, r.checked_at, r.message);
+    }
+}
+
+#[component]
+fn VaultTab(
+    vault_notes: Signal<Vec<(String, String)>>,
+    projects: Signal<HashMap<String, ProjectInfo>>
+) -> Element {
+    let mut selected_note_index = use_signal(|| None::<usize>);
+    let mut edit_note_name = use_signal(String::new);
+    let mut edit_note_content = use_signal(String::new);
+    let mut create_mode = use_signal(|| false);
+
+    let mut inject_project = use_signal(String::new);
+    let mut inject_status = use_signal(String::new);
+
+    let projects_map = projects.read();
+
+    rsx! {
+        div { class: "grid grid-cols-1 lg:grid-cols-3 gap-8 items-start h-[calc(100vh-180px)]",
+            // Notes list sidebar
+            div { class: "bg-slate-900/40 border border-slate-850 rounded-2xl p-4 flex flex-col gap-4 h-full",
+                div { class: "flex items-center justify-between",
+                    h3 { class: "font-bold text-slate-200", "Knowledge Vault" }
+                    button {
+                        class: "px-3 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 text-xs font-semibold border border-indigo-500/20 transition-all",
+                        onclick: move |_| {
+                            create_mode.set(true);
+                            selected_note_index.set(None);
+                            edit_note_name.set(String::new());
+                            edit_note_content.set(String::new());
+                        },
+                        "+ Add Note"
                     }
-                    let healthy_count = results.iter().filter(|r| r.healthy).count();
-                    let failed_count = results.len() - healthy_count;
-                    println!("\nSummary: {} passed, {} failed.", healthy_count, failed_count);
                 }
-                Err(e) => {
-                    eprintln!("Health check error: {}", e);
-                    std::process::exit(1);
+
+                div { class: "flex-1 overflow-y-auto flex flex-col gap-2 scrollbar-thin scrollbar-thumb-slate-800",
+                    for i in 0..vault_notes.read().len() {
+                        if let Some((name, _)) = vault_notes.read().get(i).cloned() {
+                            button {
+                                class: "w-full text-left px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 border "
+                                    .to_string() + if Some(i) == *selected_note_index.read() && !*create_mode.read() {
+                                        "bg-indigo-600/10 text-indigo-300 border-indigo-500/20"
+                                    } else {
+                                        "hover:bg-slate-800/40 text-slate-400 hover:text-slate-300 border-transparent"
+                                    },
+                                onclick: move |_| {
+                                    create_mode.set(false);
+                                    selected_note_index.set(Some(i));
+                                    edit_note_name.set(name.clone());
+                                    if let Some(note) = vault_notes.read().get(i) {
+                                        edit_note_content.set(note.1.clone());
+                                    }
+                                    inject_status.set(String::new());
+                                },
+                                "📝 {name}"
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Note editor panel
+            div { class: "lg:col-span-2 bg-slate-900/30 border border-slate-850 rounded-2xl p-6 h-full flex flex-col justify-between",
+                if *create_mode.read() || selected_note_index.read().is_some() {
+                    div { class: "flex-1 flex flex-col gap-4 overflow-hidden",
+                        div { class: "flex flex-col gap-1.5",
+                            label { class: "text-xs font-semibold text-slate-500 uppercase tracking-wider", "Note Filename" }
+                            input {
+                                class: "w-full bg-slate-950/80 border border-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-lg px-3 py-2 text-slate-100 outline-none transition-all",
+                                placeholder: "e.g., custom_rules.md",
+                                readonly: !*create_mode.read(),
+                                value: "{edit_note_name}",
+                                oninput: move |e| edit_note_name.set(e.value())
+                            }
+                        }
+
+                        div { class: "flex-1 flex flex-col gap-1.5 overflow-hidden",
+                            label { class: "text-xs font-semibold text-slate-500 uppercase tracking-wider", "Note Content" }
+                            textarea {
+                                class: "flex-1 w-full bg-slate-950/80 border border-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-lg px-3 py-2 text-slate-100 outline-none transition-all resize-none font-mono text-sm leading-relaxed scrollbar-thin scrollbar-thumb-slate-800",
+                                placeholder: "Write note in Markdown formatting...",
+                                value: "{edit_note_content}",
+                                oninput: move |e| edit_note_content.set(e.value())
+                            }
+                        }
+
+                        // Inject knowledge section
+                        if selected_note_index.read().is_some() && !*create_mode.read() {
+                            div { class: "bg-slate-950/40 border border-slate-850 rounded-xl p-4 flex flex-col gap-3",
+                                h4 { class: "text-xs font-bold text-slate-400 uppercase tracking-wider", "Inject Context Memory" }
+                                div { class: "flex items-center gap-4",
+                                    select {
+                                        class: "bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 outline-none focus:border-indigo-500 transition-all",
+                                        value: "{inject_project}",
+                                        onchange: move |e| inject_project.set(e.value()),
+                                        option { value: "", "Select project target..." }
+                                        for proj_key in projects_map.keys() {
+                                            option { value: "{proj_key}", "{proj_key}" }
+                                        }
+                                    }
+                                    button {
+                                        class: "px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-900/30 transition-all active:scale-95",
+                                        onclick: move |_| async move {
+                                            if inject_project.read().is_empty() {
+                                                inject_status.set("Please select a project first.".to_string());
+                                                return;
+                                            }
+                                            let project_val = inject_project.read().clone();
+                                            let note_name_val = edit_note_name.read().clone();
+                                            match inject_knowledge(project_val, note_name_val).await {
+                                                Ok(_) => inject_status.set("Successfully injected knowledge into project context!".to_string()),
+                                                Err(e) => inject_status.set(format!("Error: {}", e))
+                                            }
+                                        },
+                                        "Inject to Project context.md"
+                                    }
+                                }
+                                if !inject_status.read().is_empty() {
+                                    p { class: "text-[11px] font-semibold text-indigo-400 mt-1", "{inject_status}" }
+                                }
+                            }
+                        }
+                    }
+
+                    // Save / Reset controls
+                    div { class: "flex justify-end gap-3 mt-6 pt-4 border-t border-slate-850",
+                        button {
+                            class: "px-4 py-2 text-xs font-semibold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700/80 transition-all",
+                            onclick: move |_| {
+                                selected_note_index.set(None);
+                                create_mode.set(false);
+                                edit_note_name.set(String::new());
+                                edit_note_content.set(String::new());
+                                inject_status.set(String::new());
+                            },
+                            "Cancel"
+                        }
+                        button {
+                            class: "px-4 py-2 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-900/30 transition-all",
+                            onclick: move |_| async move {
+                                if edit_note_name.read().is_empty() { return; }
+                                let mut name_with_ext = edit_note_name.read().clone();
+                                if !name_with_ext.ends_with(".md") {
+                                    name_with_ext.push_str(".md");
+                                }
+                                let name_val = name_with_ext.clone();
+                                let content_val = edit_note_content.read().clone();
+                                if let Ok(_) = save_vault_note(name_val, content_val).await {
+                                    selected_note_index.set(None);
+                                    create_mode.set(false);
+                                    edit_note_name.set(String::new());
+                                    edit_note_content.set(String::new());
+                                    inject_status.set(String::new());
+                                    if let Ok(vn) = get_vault_notes().await {
+                                        vault_notes.set(vn);
+                                    }
+                                }
+                            },
+                            "Save Note"
+                        }
+                    }
+                } else {
+                    div { class: "flex-1 flex flex-col items-center justify-center text-center gap-3",
+                        span { class: "text-4xl", "📚" }
+                        h3 { class: "font-semibold text-slate-300 text-lg", "Select a Note" }
+                        p { class: "text-slate-500 text-sm max-w-xs", "Choose a note from the left sidebar to view/edit, or build a new one." }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn LogsTab(logs: Signal<String>) -> Element {
+    rsx! {
+        div { class: "flex flex-col gap-4 h-[calc(100vh-180px)]",
+            div {
+                h2 { class: "text-2xl font-bold text-slate-100", "Live Notification Logs" }
+                p { class: "text-sm text-slate-400 mt-1", "View real-time event updates and background agent activities." }
+            }
+
+            // Shell Terminal Viewer
+            div { class: "flex-1 bg-slate-950 border border-slate-850 rounded-2xl p-6 font-mono text-sm leading-relaxed text-slate-300 overflow-y-auto flex flex-col gap-1.5 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent select-text",
+                if logs.read().is_empty() {
+                    div { class: "text-slate-500 italic py-8 text-center",
+                        "Terminal is idle. Waiting for logs..."
+                    }
+                } else {
+                    for line in logs.read().lines() {
+                        div { class: "whitespace-pre-wrap py-0.5",
+                            if line.contains("ERROR") {
+                                span { class: "text-rose-400 font-semibold", "{line}" }
+                            } else if line.contains("WARN") {
+                                span { class: "text-amber-400 font-semibold", "{line}" }
+                            } else {
+                                span { class: "text-slate-300", "{line}" }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Entrypoint
+fn main() -> std::io::Result<()> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let has_args = std::env::args().len() > 1;
+        let is_dioxus_env = std::env::var("PORT").is_ok() || std::env::var("ADDR").is_ok() || std::env::var("DIOXUS_ACTIVE").is_ok();
+
+        if !has_args || is_dioxus_env {
+            // Under dx serve or when direct execution with no args is called, boot up Dioxus.
+            dioxus::launch(App);
+            Ok(())
+        } else {
+            let cli_cmd = cli::Cli::parse();
+            match cli::run_cli(cli_cmd)? {
+                cli::CliResult::Exit => Ok(()),
+                cli::CliResult::StartDashboard { port } => {
+                    // Set port in environment so dioxus can find it
+                    std::env::set_var("PORT", port.to_string());
+                    dioxus::launch(App);
+                    Ok(())
                 }
             }
         }
     }
 
-    Ok(())
+    #[cfg(target_arch = "wasm32")]
+    {
+        dioxus::launch(App);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -1597,7 +1038,10 @@ mod tests {
 
     #[test]
     fn test_pid_alive() {
-        assert!(is_pid_alive(std::process::id()));
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            assert!(state::is_pid_alive(std::process::id()));
+        }
     }
 
     #[test]

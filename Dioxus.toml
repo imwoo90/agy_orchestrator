@@ -1,0 +1,8 @@
+[application]
+name = "agy-orchestrator"
+default_platform = "web"
+tailwind_input = "tailwind.css"
+tailwind_output = "assets/tailwind.css"
+
+[web.app]
+title = "AGY Agent Orchestrator Dashboard"
