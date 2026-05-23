@@ -216,6 +216,29 @@ fn ProjectsTab(
 
     let projects_map = projects.read();
 
+    // 1. Build parent-child relationships
+    let mut root_projects = Vec::new();
+    let mut sub_projects: HashMap<String, Vec<(String, ProjectInfo)>> = HashMap::new();
+
+    for (name, info) in projects_map.iter() {
+        if name.contains("_sub_") {
+            if let Some(sub_idx) = name.rfind("_sub_") {
+                let parent_name = name[..sub_idx].to_string();
+                if projects_map.contains_key(&parent_name) {
+                    sub_projects.entry(parent_name).or_default().push((name.clone(), info.clone()));
+                    continue;
+                }
+            }
+        }
+        root_projects.push((name.clone(), info.clone()));
+    }
+
+    // Sort to ensure stable rendering order
+    root_projects.sort_by(|a, b| a.0.cmp(&b.0));
+    for subs in sub_projects.values_mut() {
+        subs.sort_by(|a, b| a.0.cmp(&b.0));
+    }
+
     rsx! {
         div { class: "flex flex-col gap-6",
             div { class: "flex items-center justify-between",
@@ -232,7 +255,7 @@ fn ProjectsTab(
             }
 
             // Projects List
-            if projects_map.is_empty() {
+            if root_projects.is_empty() {
                 div { class: "bg-slate-900/30 border border-slate-850 rounded-2xl p-12 text-center flex flex-col items-center gap-3",
                     span { class: "text-4xl", "📭" }
                     h3 { class: "font-semibold text-slate-300 text-lg", "No projects registered" }
@@ -240,7 +263,7 @@ fn ProjectsTab(
                 }
             } else {
                 div { class: "grid grid-cols-1 xl:grid-cols-2 gap-6",
-                    for (proj_name, info) in projects_map.iter() {
+                    for (proj_name, info) in root_projects.iter() {
                         div { class: "bg-slate-900/50 backdrop-blur-md border border-slate-800/80 rounded-2xl p-6 flex flex-col justify-between hover:border-slate-700/60 transition-all duration-200 shadow-lg shadow-slate-950/20",
                             div { class: "flex flex-col gap-4",
                                 div { class: "flex items-start justify-between",
@@ -269,6 +292,60 @@ fn ProjectsTab(
                                 div { class: "flex flex-col gap-1",
                                     span { class: "text-xs font-semibold text-slate-500", "Workspace Path" }
                                     span { class: "text-xs font-mono text-slate-400 truncate bg-slate-950/30 px-2 py-1 rounded border border-slate-900/80", "{info.path}" }
+                                }
+
+                                // Nested Sub-Agents
+                                if let Some(subs) = sub_projects.get(proj_name) {
+                                    div { class: "mt-4 border-t border-slate-800/80 pt-4 flex flex-col gap-3 pl-4 border-l-2 border-indigo-500/20 ml-2",
+                                        div { class: "text-[10px] font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1.5",
+                                            span { "└─" }
+                                            span { "Sub-Agents" }
+                                        }
+                                        {
+                                            subs.iter().map(|(sub_name, sub_info)| {
+                                                let display_subtask_name = if let Some(sub_idx) = sub_name.rfind("_sub_") {
+                                                    &sub_name[sub_idx + 5..]
+                                                } else {
+                                                    sub_name.as_str()
+                                                };
+                                                rsx! {
+                                                    div { class: "bg-slate-950/40 border border-slate-850 hover:border-slate-800/60 rounded-xl p-3 flex flex-col gap-2.5 shadow-inner transition-all duration-200",
+                                                        div { class: "flex items-start justify-between",
+                                                            div { class: "flex flex-col gap-0.5",
+                                                                h4 { class: "text-xs font-bold text-slate-300", "{display_subtask_name}" }
+                                                                span { class: "text-[9px] font-mono text-slate-500", "PID: {sub_info.pid}" }
+                                                            }
+                                                            span {
+                                                                class: "px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider "
+                                                                    .to_string() + match sub_info.status.as_str() {
+                                                                        "running" => "bg-sky-500/10 text-sky-400 border border-sky-500/20 animate-pulse",
+                                                                        "completed" => "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20",
+                                                                        "failed" => "bg-rose-500/10 text-rose-400 border border-rose-500/20",
+                                                                        _ => "bg-slate-800 text-slate-400"
+                                                                    },
+                                                                "{sub_info.status}"
+                                                            }
+                                                        }
+                                                        div { class: "bg-slate-950/30 border border-slate-900 rounded-lg p-2 flex flex-col gap-1",
+                                                            p { class: "text-[11px] text-slate-400 leading-normal", "{sub_info.goal}" }
+                                                        }
+                                                        div { class: "flex items-center justify-between text-[9px] text-slate-500 border-t border-slate-900/60 pt-1.5",
+                                                            span { class: "truncate max-w-[150px] font-mono", "{sub_info.path}" }
+                                                            if let Some(health) = system_health.read().iter().find(|h| h.target == *sub_name) {
+                                                                if health.healthy {
+                                                                    span { class: "text-emerald-400 font-semibold", "✅ OK" }
+                                                                } else {
+                                                                    span { class: "text-rose-400 font-semibold cursor-help", title: "{health.message}", "❌ FAIL" }
+                                                                }
+                                                            } else {
+                                                                span { class: "text-slate-400", "⏳ Pending" }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            })
+                                        }
+                                    }
                                 }
                             }
 
