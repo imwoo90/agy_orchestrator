@@ -140,6 +140,15 @@ pub enum Commands {
         #[arg(long)]
         query: String,
     },
+    /// Delegate a subtask to a sub-agent
+    Delegate {
+        #[arg(long)]
+        parent: String,
+        #[arg(long)]
+        subtask: String,
+        #[arg(long)]
+        goal: String,
+    },
 }
 
 pub enum CliResult {
@@ -662,6 +671,36 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
                 println!("Cleaned up report.md after consolidation.");
             }
 
+            // Sub-agent report feedback loop (Child -> Parent context feedback)
+            if name.contains("_sub_") {
+                if let Some(sub_idx) = name.rfind("_sub_") {
+                    let parent_name = &name[..sub_idx];
+                    let subtask_name = &name[sub_idx + 5..];
+                    
+                    if let Some(parent_info) = state.get(parent_name) {
+                        let parent_context_path = Path::new(&parent_info.path).join("context.md");
+                        if let Ok(mut parent_context_file) = fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(&parent_context_path)
+                        {
+                            let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
+                            let _ = writeln!(
+                                parent_context_file,
+                                "\n\n==================================================\n\
+                                 # 📢 Subtask Completed: '{}' at {}\n\
+                                 - Sub-agent Name: {}\n\
+                                 - Completed Report:\n\n\
+                                 {}\n\
+                                 ==================================================\n",
+                                subtask_name, timestamp, name, report_content.trim()
+                            );
+                            println!("Feedback Loop: Auto-injected subtask completed report into parent '{}' context.md", parent_name);
+                        }
+                    }
+                }
+            }
+
             save_state(&state)?;
 
             println!("Successfully consolidated report.md into context_history.md for project '{}'.", name);
@@ -1044,6 +1083,193 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
                     println!("--- Match {} ---", idx + 1);
                     println!("{}", block.trim());
                     println!("----------------\n");
+                }
+            }
+        }
+        Commands::Delegate { parent, subtask, goal } => {
+            let mut state = load_state();
+            let parent_info = match state.get(&parent) {
+                Some(info) => info.clone(),
+                None => {
+                    eprintln!("Error: Parent project '{}' not found in projects.json.", parent);
+                    std::process::exit(1);
+                }
+            };
+
+            let child_name = format!("{}_sub_{}", parent, subtask);
+            
+            if let Some(info) = state.get_mut(&child_name) {
+                if check_project_status(&child_name, info) == "running" {
+                    eprintln!("Error: Sub-agent '{}' is already running with PID {}.", child_name, info.pid);
+                    std::process::exit(1);
+                }
+            }
+
+            let project_path_str = parent_info.path.clone();
+            
+            // AGENTS.md inheritance
+            let parent_agents_path = Path::new(&project_path_str).join("AGENTS.md");
+            let mut agents_inject = String::new();
+            if parent_agents_path.exists() {
+                if let Ok(content) = fs::read_to_string(&parent_agents_path) {
+                    agents_inject = format!(
+                        "\n\n==================================================\n\
+                         [PARENT PROJECT PLAYBOOK - AGENTS.MD]\n\
+                         (This subtask belongs to parent project '{}'. Follow these guidelines!)\n\n\
+                         {}\n\
+                         ==================================================\n\n",
+                        parent, content.trim()
+                    );
+                }
+            }
+
+            // Parent context.md JIT inject
+            let parent_context_path = Path::new(&project_path_str).join("context.md");
+            let mut parent_context_inject = String::new();
+            if parent_context_path.exists() {
+                if let Ok(content) = fs::read_to_string(&parent_context_path) {
+                    parent_context_inject = format!(
+                        "\n\n==================================================\n\
+                         [PARENT ACTIVE CONTEXT - HOT MEMORY]\n\
+                         (Current parent project state for your reference):\n\n\
+                         {}\n\
+                         ==================================================\n\n",
+                        content.trim()
+                    );
+                }
+            }
+
+            let report_instruction = format!(
+                "\n\n==================================================\n\
+                 SYSTEM INSTRUCTIONS FOR COMPLETION:\n\
+                 Once you complete this subtask, you MUST generate a 'report.md' file in the root of the project directory ({})\n\
+                 This report must contain:\n\
+                 1. A summary of completed tasks.\n\
+                 2. Crucial design/architectural choices made.\n\
+                 3. Minor choices resolved autonomously.\n\
+                 4. A section 'CRITICAL ITEMS FOR REVIEW' containing only items that require manual review or escalation. If none, clearly state 'None'.\n\n\
+                 Ensure this report is written before you finish. The orchestrator will automatically consolidate this subtask report back into the parent project context.",
+                project_path_str
+            );
+
+            // JIT Skills Catalog Auto-Injection
+            let skills_dir = base_dir.join("memory/skills");
+            let mut skills_inject = String::new();
+            if skills_dir.exists() {
+                let mut matched_skills = Vec::new();
+                let goal_lower = goal.to_lowercase();
+                let keywords: std::collections::HashSet<String> = goal_lower
+                    .split(|c: char| !c.is_alphanumeric())
+                    .filter(|s| s.len() >= 4)
+                    .map(|s| s.to_string())
+                    .collect();
+
+                if let Ok(entries) = fs::read_dir(&skills_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.extension().map_or(false, |ext| ext == "md") {
+                            if let Ok(content) = fs::read_to_string(&path) {
+                                let mut skill_name = String::new();
+                                let mut skill_desc = String::new();
+                                for line in content.lines() {
+                                    let trimmed = line.trim();
+                                    if trimmed.starts_with("name:") {
+                                        skill_name = trimmed.trim_start_matches("name:").trim().to_string();
+                                    } else if trimmed.starts_with("description:") {
+                                        skill_desc = trimmed.trim_start_matches("description:").trim().to_string();
+                                    }
+                                }
+                                if !skill_name.is_empty() {
+                                    let skill_name_lower = skill_name.to_lowercase();
+                                    let skill_desc_lower = skill_desc.to_lowercase();
+                                    let is_match = keywords.iter().any(|kw| {
+                                        kw != "this" && kw != "that" && kw != "with" && kw != "from" &&
+                                        (skill_name_lower.contains(kw) || skill_desc_lower.contains(kw))
+                                    });
+                                    if is_match || goal_lower.contains(&skill_name_lower) {
+                                        matched_skills.push((skill_name, skill_desc));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if !matched_skills.is_empty() {
+                    let mut skills_list = String::new();
+                    for (s_name, s_desc) in matched_skills {
+                        skills_list.push_str(&format!("- name: {}\n  description: {}\n", s_name, s_desc));
+                    }
+                    skills_inject = format!(
+                        "\n\n==================================================\n\
+                         [AVAILABLE PROCEDURAL SKILLS (Level 0 Index)]\n\
+                         (To load full instructions, execute: `./target/release/agy-orchestrator load-skill --name <skill_name>`)\n\n\
+                         {}\
+                         ==================================================\n\n",
+                        skills_list
+                    );
+                }
+            }
+
+            let final_prompt = format!(
+                "{}{}{}{}{}",
+                agents_inject,
+                parent_context_inject,
+                skills_inject,
+                goal,
+                report_instruction
+            );
+
+            let log_file_path = base_dir.join("logs").join(format!("{}.log", child_name));
+            let log_file = File::create(&log_file_path)?;
+
+            let mut cmd = Command::new("agy");
+            cmd.arg("--add-dir")
+                .arg(&project_path_str)
+                .arg("--dangerously-skip-permissions")
+                .arg("--print")
+                .arg(&final_prompt)
+                .stdout(Stdio::from(log_file.try_clone()?))
+                .stderr(Stdio::from(log_file))
+                .stdin(Stdio::null());
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                extern "C" {
+                    fn setsid() -> i32;
+                }
+                unsafe {
+                    cmd.pre_exec(|| {
+                        setsid();
+                        Ok(())
+                    });
+                }
+            }
+
+            let child = cmd.spawn();
+
+            match child {
+                Ok(c) => {
+                    let pid = c.id();
+                    state.insert(
+                        child_name.clone(),
+                        ProjectInfo {
+                            path: project_path_str.clone(),
+                            goal: goal.clone(),
+                            pid,
+                            status: "running".to_string(),
+                            spawned_at: Local::now().to_rfc3339(),
+                        },
+                    );
+                    save_state(&state)?;
+
+                    println!("Successfully spawned sub-agent '{}' in background.", child_name);
+                    println!("PID: {}", pid);
+                    println!("Logs: {}", log_file_path.canonicalize()?.to_string_lossy());
+                }
+                Err(e) => {
+                    eprintln!("Failed to spawn sub-agent command: {}", e);
+                    std::process::exit(1);
                 }
             }
         }

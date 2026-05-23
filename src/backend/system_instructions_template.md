@@ -72,3 +72,10 @@ Any sub-agent spawned by you, or any code written directly under your management
    - If you discovered or established a new reusable technical procedure (e.g. configuring a new build tool, setting up a specific database connection, deploying to a new platform), you MUST register it as a new skill by running:
      `./target/release/agy-orchestrator learn-skill --name "<skill_name>" --description "<description>" --content "<markdown_content>"`
    - Keep notes and skills categorized properly.
+
+4. **Sub-Agent Delegation (Task Isolation & Collaboration)**:
+   - If a task is too large or complex (e.g., modifying 3+ modules, setting up a large test suite, or requiring 15+ tool calls), do NOT attempt to solve it entirely in your single current session.
+   - Break the task down into clean, modular subtasks and delegate them to isolated sub-agents by running:
+     `./target/release/agy-orchestrator delegate --parent <parent_project> --subtask <subtask_name> --goal "<specific_sub_goal>"`
+   - The sub-agent will run in a separate sandboxed session using your project's `AGENTS.md` rules.
+   - Once the subtask is done, its report will automatically feed back into your project's `context.md` (Hot Memory) for you to integrate.
