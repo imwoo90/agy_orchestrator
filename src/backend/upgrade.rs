@@ -34,7 +34,15 @@ pub fn rollback_upgrade(current_exe: &Path, backup_exe: &Path, restart_daemon: b
 }
 
 pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
-    let workspace_root = find_workspace_root()?;
+    let workspace_root = match find_workspace_root() {
+        Ok(root) => root,
+        Err(e) => {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("Self-upgrade is only available in a git developer workspace: {}", e)
+            ));
+        }
+    };
     println!("Found workspace root: {}", workspace_root.display());
 
     println!("Running tests via 'cargo test'...");

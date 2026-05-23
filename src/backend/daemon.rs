@@ -35,7 +35,14 @@ pub fn run_daemon_loop() -> io::Result<()> {
     let base_dir = get_base_dir();
     let notifications_path = base_dir.join("notifications.log");
 
-    println!("Orchestrator daemon started in foreground. Monitoring projects...");
+    let is_evolution_mode = find_workspace_root().is_ok();
+    if is_evolution_mode {
+        println!("Orchestrator daemon started in foreground. [Mode: Self-Evolution]");
+        println!("Monitoring active projects and evolution issues...");
+    } else {
+        println!("Orchestrator daemon started in foreground. [Mode: Standard]");
+        println!("Monitoring active projects (Self-evolution features are disabled).");
+    }
 
     let mut tick_count: u64 = 0;
 
@@ -222,16 +229,21 @@ pub fn run_daemon_loop() -> io::Result<()> {
             }
         }
 
-        // Check for open issues to evolve
+        // Check for open issues to evolve (only in evolution mode)
         let mut evolution_running = false;
-        for (name, info) in state.iter() {
-            if name.starts_with("self_evolution_issue_") && info.status == "running" {
-                evolution_running = true;
-                break;
+        if is_evolution_mode {
+            for (name, info) in state.iter() {
+                if name.starts_with("self_evolution_issue_") && info.status == "running" {
+                    evolution_running = true;
+                    break;
+                }
             }
+        } else {
+            // Standard mode: prevent evolution scans
+            evolution_running = true;
         }
 
-        if !evolution_running {
+        if is_evolution_mode && !evolution_running {
             let mut issues = load_issues();
             if let Some(open_issue) = issues.iter_mut().find(|i| i.status == "open") {
                 let issue_id = open_issue.id;
