@@ -27,6 +27,24 @@ pub const DEFAULT_WORKFLOW: &str = "\
 - **Escalate**: External billing, cloud infrastructure costs, API credentials, unrecoverable system failures.
 ";
 
+pub const DEFAULT_SKILL_RUST: &str = "\
+---
+name: rust_testing
+description: Standard procedure for running and writing tests in a Rust cargo project.
+version: 1.0.0
+---
+
+# Rust Testing Guidelines
+
+## When to Use
+Use this skill whenever you write new Rust logic or modify existing Rust crates to ensure regressions are caught.
+
+## Procedure
+1. Create unit tests in the same file using the `#[cfg(test)]` module pattern.
+2. For integration tests, use the `tests/` directory.
+3. Run tests using `cargo test`.
+";
+
 pub fn get_base_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/home/wimvm".to_string());
     PathBuf::from(home).join(".agy_orchestrator")
@@ -41,10 +59,20 @@ pub fn bootstrap_if_needed() -> io::Result<()> {
     let vault_dir = base_dir.join("memory/vault");
     fs::create_dir_all(&vault_dir)?;
 
+    let skills_dir = base_dir.join("memory/skills");
+    fs::create_dir_all(&skills_dir)?;
+
     // 1. Static System Instructions: Always force-overwrite to sync system updates
     let sys_instructions_path = base_dir.join("memory/system_instructions.md");
     let mut file = File::create(sys_instructions_path)?;
     file.write_all(SYSTEM_INSTRUCTIONS_TEMPLATE.as_bytes())?;
+
+    // Create default skill if missing
+    let default_skill_path = skills_dir.join("rust_testing.md");
+    if !default_skill_path.exists() {
+        let mut f_skill = File::create(default_skill_path)?;
+        f_skill.write_all(DEFAULT_SKILL_RUST.as_bytes())?;
+    }
 
     // 2. Vault Default notes (write only if they don't exist to preserve user updates)
     let readme_path = vault_dir.join("README.md");

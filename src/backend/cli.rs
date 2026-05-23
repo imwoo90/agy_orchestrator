@@ -114,6 +114,20 @@ pub enum Commands {
     },
     /// Run a proactive health check on all registered targets
     HealthCheck,
+    /// Load a specific procedural skill's full details
+    LoadSkill {
+        #[arg(long)]
+        name: String,
+    },
+    /// Learn and register a new procedural skill
+    LearnSkill {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        description: String,
+        #[arg(long)]
+        content: String,
+    },
 }
 
 pub enum CliResult {
@@ -219,7 +233,75 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
                 project_path_str
             );
 
-            let full_prompt = format!("{}{}{}{}", agents_inject, context_inject, goal, report_instruction);
+            // 3. JIT Skills Catalog Auto-Injection (Progressive Disclosure)
+            let skills_dir = base_dir.join("memory/skills");
+            let mut skills_inject = String::new();
+            if skills_dir.exists() {
+                let mut matched_skills = Vec::new();
+                let goal_lower = goal.to_lowercase();
+                
+                // Extract keywords from goal for matching
+                let keywords: std::collections::HashSet<String> = goal_lower
+                    .split(|c: char| !c.is_alphanumeric())
+                    .filter(|s| s.len() >= 4)
+                    .map(|s| s.to_string())
+                    .collect();
+
+                if let Ok(entries) = fs::read_dir(&skills_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.extension().map_or(false, |ext| ext == "md") {
+                            if let Ok(content) = fs::read_to_string(&path) {
+                                // Basic YAML parser to extract name and description
+                                let mut skill_name = String::new();
+                                let mut skill_desc = String::new();
+                                
+                                for line in content.lines() {
+                                    let trimmed = line.trim();
+                                    if trimmed.starts_with("name:") {
+                                        skill_name = trimmed.trim_start_matches("name:").trim().to_string();
+                                    } else if trimmed.starts_with("description:") {
+                                        skill_desc = trimmed.trim_start_matches("description:").trim().to_string();
+                                    }
+                                }
+
+                                if !skill_name.is_empty() {
+                                    let skill_name_lower = skill_name.to_lowercase();
+                                    let skill_desc_lower = skill_desc.to_lowercase();
+                                    
+                                    // Match if skill name or description contains any of the goal keywords
+                                    let is_match = keywords.iter().any(|kw| {
+                                        kw != "this" && kw != "that" && kw != "with" && kw != "from" &&
+                                        (skill_name_lower.contains(kw) || skill_desc_lower.contains(kw))
+                                    });
+
+                                    if is_match || goal_lower.contains(&skill_name_lower) {
+                                        matched_skills.push((skill_name, skill_desc));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if !matched_skills.is_empty() {
+                    let mut skills_list = String::new();
+                    for (s_name, s_desc) in matched_skills {
+                        skills_list.push_str(&format!("- name: {}\n  description: {}\n", s_name, s_desc));
+                    }
+                    skills_inject = format!(
+                        "\n\n==================================================\n\
+                         [AVAILABLE PROCEDURAL SKILLS (Level 0 Index)]\n\
+                         (The following procedures are available in your system. To load the full step-by-step instructions for any skill, execute: `./target/release/agy-orchestrator load-skill --name <skill_name>`)\n\n\
+                         {}\
+                         ==================================================\n\n",
+                        skills_list
+                    );
+                    println!("JIT: Auto-injected matching procedural skills catalog index.");
+                }
+            }
+
+            let full_prompt = format!("{}{}{}{}{}", agents_inject, context_inject, skills_inject, goal, report_instruction);
             let log_file_path = base_dir.join("logs").join(format!("{}.log", name));
             let log_file = File::create(&log_file_path)?;
 
@@ -834,6 +916,52 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
                     std::process::exit(1);
                 }
             }
+        }
+        Commands::LoadSkill { name } => {
+            let skills_dir = base_dir.join("memory/skills");
+            if !skills_dir.exists() {
+                eprintln!("Error: Skills registry not found.");
+                std::process::exit(1);
+            }
+
+            let file_path = skills_dir.join(format!("{}.md", name));
+            if !file_path.exists() {
+                eprintln!("Error: Skill '{}' not found.", name);
+                std::process::exit(1);
+            }
+
+            let mut content = String::new();
+            File::open(&file_path)?.read_to_string(&mut content)?;
+            println!("{}", content);
+        }
+        Commands::LearnSkill { name, description, content } => {
+            let skills_dir = base_dir.join("memory/skills");
+            fs::create_dir_all(&skills_dir)?;
+
+            let sanitized_name = name
+                .trim()
+                .to_lowercase()
+                .replace(' ', "_")
+                .replace(|c: char| !c.is_alphanumeric() && c != '_', "");
+
+            if sanitized_name.is_empty() {
+                eprintln!("Error: Invalid skill name.");
+                std::process::exit(1);
+            }
+
+            let file_path = skills_dir.join(format!("{}.md", sanitized_name));
+            let mut file = File::create(&file_path)?;
+
+            // Write YAML frontmatter followed by markdown content
+            writeln!(
+                file,
+                "---\nname: {}\ndescription: {}\nversion: 1.0.0\n---\n\n{}",
+                sanitized_name,
+                description.trim(),
+                content.trim()
+            )?;
+
+            println!("Successfully learned and registered skill: '{}' at {}", sanitized_name, file_path.display());
         }
     }
 
