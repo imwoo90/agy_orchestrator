@@ -310,12 +310,16 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
                     for (s_name, s_desc) in matched_skills {
                         skills_list.push_str(&format!("- name: {}\n  description: {}\n", s_name, s_desc));
                     }
+                    let current_exe = std::env::current_exe()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_else(|_| "agy-orchestrator".to_string());
                     skills_inject = format!(
                         "\n\n==================================================\n\
                          [AVAILABLE PROCEDURAL SKILLS (Level 0 Index)]\n\
-                         (The following procedures are available in your system. To load the full step-by-step instructions for any skill, execute: `./target/release/agy-orchestrator load-skill --name <skill_name>`)\n\n\
+                         (The following procedures are available in your system. To load the full step-by-step instructions for any skill, execute: `{} load-skill --name <skill_name>`)\n\n\
                          {}\
                          ==================================================\n\n",
+                        current_exe,
                         skills_list
                     );
                     println!("JIT: Auto-injected matching procedural skills catalog index.");
@@ -1199,12 +1203,16 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
                     for (s_name, s_desc) in matched_skills {
                         skills_list.push_str(&format!("- name: {}\n  description: {}\n", s_name, s_desc));
                     }
+                    let current_exe = std::env::current_exe()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_else(|_| "agy-orchestrator".to_string());
                     skills_inject = format!(
                         "\n\n==================================================\n\
                          [AVAILABLE PROCEDURAL SKILLS (Level 0 Index)]\n\
-                         (To load full instructions, execute: `./target/release/agy-orchestrator load-skill --name <skill_name>`)\n\n\
+                         (To load full instructions, execute: `{} load-skill --name <skill_name>`)\n\n\
                          {}\
                          ==================================================\n\n",
+                        current_exe,
                         skills_list
                     );
                 }

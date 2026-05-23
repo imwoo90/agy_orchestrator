@@ -65,7 +65,11 @@ pub fn bootstrap_if_needed() -> io::Result<()> {
     // 1. Static System Instructions: Always force-overwrite to sync system updates
     let sys_instructions_path = base_dir.join("memory/system_instructions.md");
     let mut file = File::create(sys_instructions_path)?;
-    file.write_all(SYSTEM_INSTRUCTIONS_TEMPLATE.as_bytes())?;
+    let current_exe = std::env::current_exe()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "agy-orchestrator".to_string());
+    let sys_content = SYSTEM_INSTRUCTIONS_TEMPLATE.replace("{{ORCHESTRATOR_BIN}}", &current_exe);
+    file.write_all(sys_content.as_bytes())?;
 
     // Create default skill if missing
     let default_skill_path = skills_dir.join("rust_testing.md");
