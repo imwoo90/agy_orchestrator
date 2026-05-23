@@ -113,7 +113,11 @@ enum Commands {
         run: bool,
     },
     /// Test, compile, and hot-reload/upgrade the orchestrator binary and daemon
-    SelfUpgrade,
+    SelfUpgrade {
+        /// Resolve a specific issue ID upon successful upgrade
+        #[arg(long)]
+        resolve_issue: Option<u32>,
+    },
     /// Manage and register self-evolution issues
     Issue {
         /// Create a new issue with a title
@@ -224,7 +228,18 @@ fn save_issues(issues: &[Issue]) -> io::Result<()> {
 
 
 fn is_pid_alive(pid: u32) -> bool {
-    Path::new(&format!("/proc/{}", pid)).exists()
+    let status_path = format!("/proc/{}/status", pid);
+    if let Ok(mut file) = File::open(status_path) {
+        let mut contents = String::new();
+        if file.read_to_string(&mut contents).is_ok() {
+            for line in contents.lines() {
+                if line.starts_with("State:") {
+                    return !line.contains('Z') && !line.contains("zombie");
+                }
+            }
+        }
+    }
+    false
 }
 
 fn check_project_status(_name: &str, info: &mut ProjectInfo) -> String {
@@ -280,6 +295,18 @@ fn run_daemon_loop() -> io::Result<()> {
         for (name, info) in state.iter_mut() {
             if info.status == "running" {
                 if !is_pid_alive(info.pid) {
+                    // Reap zombie process on Unix
+                    #[cfg(unix)]
+                    {
+                        extern "C" {
+                            fn waitpid(pid: i32, status: *mut i32, options: i32) -> i32;
+                        }
+                        let mut status = 0;
+                        unsafe {
+                            waitpid(info.pid as i32, &mut status, 0);
+                        }
+                    }
+
                     // Process finished!
                     let report_path = Path::new(&info.path).join("report.md");
                     let status = if report_path.exists() {
@@ -308,56 +335,52 @@ fn run_daemon_loop() -> io::Result<()> {
                         if name.starts_with("self_evolution_issue_") {
                             if let Some(id_str) = name.strip_prefix("self_evolution_issue_") {
                                 if let Ok(issue_id) = id_str.parse::<u32>() {
-                                    let mut issues = load_issues();
-                                    if let Some(issue) = issues.iter_mut().find(|i| i.id == issue_id) {
-                                        let issue_title = issue.title.clone();
-                                        println!("Self-evolution task completed for issue #{}. Initiating self-upgrade...", issue_id);
-                                        
-                                        match run_self_upgrade() {
-                                            Ok(_) => {
-                                                issue.status = "resolved".to_string();
-                                                issue.resolved_at = Some(Local::now().to_rfc3339());
-                                                let _ = save_issues(&issues);
+                                    println!("Self-evolution task completed for issue #{}. Launching detached self-upgrade process...", issue_id);
+                                    
+                                    // Clean up report.md
+                                    let _ = fs::remove_file(&report_path);
 
-                                                // Git commit and push
-                                                if let Ok(workspace_root) = find_workspace_root() {
-                                                    let _ = Command::new("git").arg("add").arg(".").current_dir(&workspace_root).status();
-                                                    let commit_msg = format!("Auto-evolution: Resolves Issue #{}: {}", issue_id, issue_title);
-                                                    let _ = Command::new("git").arg("commit").arg("-m").arg(&commit_msg).current_dir(&workspace_root).status();
-                                                    
-                                                    if let Ok(output) = Command::new("git").arg("remote").current_dir(&workspace_root).output() {
-                                                        let remote_str = String::from_utf8_lossy(&output.stdout);
-                                                        if !remote_str.trim().is_empty() {
-                                                            let _ = Command::new("git").arg("push").current_dir(&workspace_root).status();
-                                                        }
-                                                    }
-                                                }
+                                    let current_exe = std::env::current_exe().unwrap_or_default();
+                                    let mut cmd = Command::new(&current_exe);
+                                    cmd.arg("self-upgrade").arg("--resolve-issue").arg(issue_id.to_string());
+                                    
+                                    // Redirect stdout/stderr of upgrade to log to make sure we capture any output
+                                    let upgrade_log_path = base_dir.join("logs").join(format!("self_upgrade_issue_{}.log", issue_id));
+                                    if let Ok(upgrade_log_file) = File::create(&upgrade_log_path) {
+                                        cmd.stdout(Stdio::from(upgrade_log_file.try_clone().unwrap()));
+                                        cmd.stderr(Stdio::from(upgrade_log_file));
+                                    }
+                                    cmd.stdin(Stdio::null());
 
-                                                // Clean up report.md
-                                                let _ = fs::remove_file(&report_path);
+                                    #[cfg(unix)]
+                                    {
+                                        use std::os::unix::process::CommandExt;
+                                        extern "C" {
+                                            fn setsid() -> i32;
+                                        }
+                                        unsafe {
+                                            cmd.pre_exec(|| {
+                                                setsid();
+                                                Ok(())
+                                            });
+                                        }
+                                    }
 
-                                                let _ = writeln!(
-                                                    log_file,
-                                                    "[{}] INFO: Self-evolution successful for issue #{}. System upgraded and committed.",
-                                                    timestamp, issue_id
-                                                );
-                                            }
-                                            Err(e) => {
-                                                issue.status = "failed".to_string();
-                                                let _ = save_issues(&issues);
-
-                                                // Git rollback
-                                                if let Ok(workspace_root) = find_workspace_root() {
-                                                    let _ = Command::new("git").arg("reset").arg("--hard").arg("HEAD").current_dir(&workspace_root).status();
-                                                    let _ = Command::new("git").arg("clean").arg("-fd").current_dir(&workspace_root).status();
-                                                }
-
-                                                let _ = writeln!(
-                                                    log_file,
-                                                    "[{}] ERROR: Self-upgrade failed for issue #{}: {}. Work rolled back.",
-                                                    timestamp, issue_id, e
-                                                );
-                                            }
+                                    match cmd.spawn() {
+                                        Ok(_) => {
+                                            let _ = writeln!(
+                                                log_file,
+                                                "[{}] INFO: Triggered detached self-upgrade for issue #{}.",
+                                                timestamp, issue_id
+                                            );
+                                        }
+                                        Err(e) => {
+                                            eprintln!("Failed to spawn self-upgrade process: {}", e);
+                                            let _ = writeln!(
+                                                log_file,
+                                                "[{}] ERROR: Failed to spawn self-upgrade process for issue #{}: {}.",
+                                                timestamp, issue_id, e
+                                            );
                                         }
                                     }
                                 }
@@ -568,7 +591,7 @@ fn rollback_upgrade(current_exe: &Path, backup_exe: &Path, restart_daemon: bool,
     Err(io::Error::new(io::ErrorKind::Other, format!("Upgrade failed and rolled back: {}", reason)))
 }
 
-fn run_self_upgrade() -> io::Result<()> {
+fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
     let workspace_root = find_workspace_root()?;
     println!("Found workspace root: {}", workspace_root.display());
 
@@ -579,6 +602,15 @@ fn run_self_upgrade() -> io::Result<()> {
         .status()?;
 
     if !test_status.success() {
+        if let Some(issue_id) = resolve_issue {
+            let mut issues = load_issues();
+            if let Some(issue) = issues.iter_mut().find(|i| i.id == issue_id) {
+                issue.status = "failed".to_string();
+                let _ = save_issues(&issues);
+            }
+            let _ = Command::new("git").arg("reset").arg("--hard").arg("HEAD").current_dir(&workspace_root).status();
+            let _ = Command::new("git").arg("clean").arg("-fd").current_dir(&workspace_root).status();
+        }
         return Err(io::Error::new(
             io::ErrorKind::Other,
             "Tests failed. Upgrade aborted.",
@@ -605,6 +637,15 @@ fn run_self_upgrade() -> io::Result<()> {
 
     if !build_status.success() {
         let _ = fs::remove_file(&backup_exe);
+        if let Some(issue_id) = resolve_issue {
+            let mut issues = load_issues();
+            if let Some(issue) = issues.iter_mut().find(|i| i.id == issue_id) {
+                issue.status = "failed".to_string();
+                let _ = save_issues(&issues);
+            }
+            let _ = Command::new("git").arg("reset").arg("--hard").arg("HEAD").current_dir(&workspace_root).status();
+            let _ = Command::new("git").arg("clean").arg("-fd").current_dir(&workspace_root).status();
+        }
         return Err(io::Error::new(
             io::ErrorKind::Other,
             "Compilation failed. Upgrade aborted.",
@@ -624,6 +665,15 @@ fn run_self_upgrade() -> io::Result<()> {
             println!("Restoring stable backup...");
             let _ = fs::rename(&old_exe, &current_exe);
             let _ = fs::remove_file(&backup_exe);
+            if let Some(issue_id) = resolve_issue {
+                let mut issues = load_issues();
+                if let Some(issue) = issues.iter_mut().find(|i| i.id == issue_id) {
+                    issue.status = "failed".to_string();
+                    let _ = save_issues(&issues);
+                }
+                let _ = Command::new("git").arg("reset").arg("--hard").arg("HEAD").current_dir(&workspace_root).status();
+                let _ = Command::new("git").arg("clean").arg("-fd").current_dir(&workspace_root).status();
+            }
             return Err(e);
         }
         let _ = fs::remove_file(&old_exe);
@@ -631,6 +681,19 @@ fn run_self_upgrade() -> io::Result<()> {
 
     let daemon_was_running = is_daemon_running();
     let old_pid = get_daemon_pid();
+
+    let rollback_and_fail_issue = |reason: &str| -> io::Result<()> {
+        if let Some(issue_id) = resolve_issue {
+            let mut issues = load_issues();
+            if let Some(issue) = issues.iter_mut().find(|i| i.id == issue_id) {
+                issue.status = "failed".to_string();
+                let _ = save_issues(&issues);
+            }
+            let _ = Command::new("git").arg("reset").arg("--hard").arg("HEAD").current_dir(&workspace_root).status();
+            let _ = Command::new("git").arg("clean").arg("-fd").current_dir(&workspace_root).status();
+        }
+        rollback_upgrade(&current_exe, &backup_exe, daemon_was_running, reason)
+    };
 
     // Run basic sanity check on the new binary
     println!("Performing sanity checks on the new binary...");
@@ -643,7 +706,7 @@ fn run_self_upgrade() -> io::Result<()> {
     match sanity_status {
         Ok(status) if status.success() => {}
         _ => {
-            return rollback_upgrade(&current_exe, &backup_exe, daemon_was_running, "New binary failed basic sanity check --help");
+            return rollback_and_fail_issue("New binary failed basic sanity check --help");
         }
     }
 
@@ -664,14 +727,14 @@ fn run_self_upgrade() -> io::Result<()> {
             .status()?;
 
         if !start_status.success() {
-            return rollback_upgrade(&current_exe, &backup_exe, daemon_was_running, "Failed to launch new daemon");
+            return rollback_and_fail_issue("Failed to launch new daemon");
         }
 
         println!("Waiting 3 seconds for health check...");
         std::thread::sleep(std::time::Duration::from_secs(3));
 
         if !is_daemon_running() {
-            return rollback_upgrade(&current_exe, &backup_exe, daemon_was_running, "Upgraded daemon crashed immediately on boot");
+            return rollback_and_fail_issue("Upgraded daemon crashed immediately on boot");
         }
 
         println!("Upgraded daemon is healthy (PID: {:?}).", get_daemon_pid());
@@ -680,6 +743,29 @@ fn run_self_upgrade() -> io::Result<()> {
     // Clean up backup binary on successful upgrade
     if backup_exe.exists() {
         let _ = fs::remove_file(&backup_exe);
+    }
+
+    // Handle post-upgrade issue resolution and Git staging/committing
+    if let Some(issue_id) = resolve_issue {
+        let mut issues = load_issues();
+        if let Some(issue) = issues.iter_mut().find(|i| i.id == issue_id) {
+            let issue_title = issue.title.clone();
+            issue.status = "resolved".to_string();
+            issue.resolved_at = Some(Local::now().to_rfc3339());
+            save_issues(&issues)?;
+
+            println!("Staging and committing evolution changes to Git...");
+            let _ = Command::new("git").arg("add").arg(".").current_dir(&workspace_root).status();
+            let commit_msg = format!("Auto-evolution: Resolves Issue #{}: {}", issue_id, issue_title);
+            let _ = Command::new("git").arg("commit").arg("-m").arg(&commit_msg).current_dir(&workspace_root).status();
+            
+            if let Ok(output) = Command::new("git").arg("remote").current_dir(&workspace_root).output() {
+                let remote_str = String::from_utf8_lossy(&output.stdout);
+                if !remote_str.trim().is_empty() {
+                    let _ = Command::new("git").arg("push").current_dir(&workspace_root).status();
+                }
+            }
+        }
     }
 
     println!("Successfully upgraded to the new version!");
@@ -1052,8 +1138,8 @@ fn main() -> io::Result<()> {
                 println!("Please specify --start, --stop, or --status.");
             }
         }
-        Commands::SelfUpgrade => {
-            run_self_upgrade()?;
+        Commands::SelfUpgrade { resolve_issue } => {
+            run_self_upgrade(resolve_issue)?;
         }
         Commands::Issue { create, body, list, resolve } => {
             let mut issues = load_issues();
@@ -1117,4 +1203,12 @@ mod tests {
     fn test_pid_alive() {
         assert!(is_pid_alive(std::process::id()));
     }
+
+    #[test]
+    fn test_evolution_comment() {
+        let content = std::fs::read_to_string("src/main.rs").expect("Failed to read src/main.rs");
+        assert!(content.contains("// Evolution verified!"));
+    }
 }
+
+// Evolution verified!
