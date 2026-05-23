@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::{self, Write, Read};
+use std::io::{self, Write, Read, BufRead};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use chrono::Local;
@@ -132,6 +132,12 @@ enum Commands {
         /// Mark a specific issue as resolved by ID
         #[arg(long)]
         resolve: Option<u32>,
+    },
+    /// Start the embedded web dashboard server
+    Dashboard {
+        /// Port to bind the dashboard web server to
+        #[arg(long, default_value_t = 8080)]
+        port: u16,
     },
 }
 
@@ -772,6 +778,191 @@ fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
     Ok(())
 }
 
+fn decode_urlencoded(s: &str) -> String {
+    let mut decoded = String::new();
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '+' {
+            decoded.push(' ');
+        } else if c == '%' {
+            let mut hex = String::new();
+            if let Some(h1) = chars.next() { hex.push(h1); }
+            if let Some(h2) = chars.next() { hex.push(h2); }
+            if let Ok(val) = u8::from_str_radix(&hex, 16) {
+                decoded.push(val as char);
+            }
+        } else {
+            decoded.push(c);
+        }
+    }
+    decoded
+}
+
+fn send_response(stream: &mut std::net::TcpStream, status_code: u32, status_text: &str, content_type: &str, body: &[u8]) -> io::Result<()> {
+    let response = format!(
+        "HTTP/1.1 {} {}\r\n\
+         Content-Type: {}; charset=utf-8\r\n\
+         Content-Length: {}\r\n\
+         Access-Control-Allow-Origin: *\r\n\
+         Connection: close\r\n\
+         \r\n",
+        status_code, status_text, content_type, body.len()
+    );
+    stream.write_all(response.as_bytes())?;
+    stream.write_all(body)?;
+    stream.flush()?;
+    Ok(())
+}
+
+fn handle_connection(mut stream: std::net::TcpStream) -> io::Result<()> {
+    let mut reader = io::BufReader::new(&stream);
+    let mut request_line = String::new();
+    if reader.read_line(&mut request_line).is_err() || request_line.is_empty() {
+        return Ok(());
+    }
+
+    let parts: Vec<&str> = request_line.split_whitespace().collect();
+    if parts.len() < 2 {
+        return Ok(());
+    }
+    let method = parts[0];
+    let path = parts[1];
+
+    let mut content_length = 0;
+    loop {
+        let mut header_line = String::new();
+        if reader.read_line(&mut header_line).is_err() || header_line.trim().is_empty() {
+            break;
+        }
+        if header_line.to_lowercase().starts_with("content-length:") {
+            if let Some(len_str) = header_line.split(':').nth(1) {
+                content_length = len_str.trim().parse::<usize>().unwrap_or(0);
+            }
+        }
+    }
+
+    let mut body = vec![0; content_length];
+    if content_length > 0 {
+        if reader.read_exact(&mut body).is_err() {
+            return Ok(());
+        }
+    }
+    let body_str = String::from_utf8_lossy(&body);
+
+    if method == "GET" && path == "/" {
+        let html = include_str!("dashboard.html");
+        send_response(&mut stream, 200, "OK", "text/html", html.as_bytes())?;
+    } else if method == "GET" && path == "/api/projects" {
+        let projects_path = get_base_dir().join("projects.json");
+        let data = fs::read(projects_path).unwrap_or_else(|_| b"{}".to_vec());
+        send_response(&mut stream, 200, "OK", "application/json", &data)?;
+    } else if method == "GET" && path == "/api/issues" {
+        let issues_path = get_base_dir().join("issues.json");
+        let data = fs::read(issues_path).unwrap_or_else(|_| b"[]".to_vec());
+        send_response(&mut stream, 200, "OK", "application/json", &data)?;
+    } else if method == "GET" && path == "/api/logs" {
+        let logs_path = get_base_dir().join("notifications.log");
+        let data = fs::read(logs_path).unwrap_or_else(|_| b"".to_vec());
+        send_response(&mut stream, 200, "OK", "text/plain", &data)?;
+    } else if method == "GET" && path == "/api/vault" {
+        let mut notes = Vec::new();
+        let vault_dir = get_base_dir().join("memory/vault");
+        if let Ok(entries) = fs::read_dir(vault_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().map_or(false, |ext| ext == "md") {
+                    let name = path.file_name().unwrap().to_string_lossy().to_string();
+                    if let Ok(content) = fs::read_to_string(&path) {
+                        notes.push(serde_json::json!({
+                            "name": name,
+                            "content": content
+                        }));
+                    }
+                }
+            }
+        }
+        let json = serde_json::to_string_pretty(&notes).unwrap_or_else(|_| "[]".to_string());
+        send_response(&mut stream, 200, "OK", "application/json", json.as_bytes())?;
+    } else if method == "POST" && path == "/api/issue" {
+        let mut title = String::new();
+        let mut body_param = String::new();
+        for param in body_str.split('&') {
+            let kv: Vec<&str> = param.split('=').collect();
+            if kv.len() == 2 {
+                if kv[0] == "title" {
+                    title = decode_urlencoded(kv[1]);
+                } else if kv[0] == "body" {
+                    body_param = decode_urlencoded(kv[1]);
+                }
+            }
+        }
+
+        if !title.is_empty() {
+            let mut issues = load_issues();
+            let next_id = issues.iter().map(|i| i.id).max().unwrap_or(0) + 1;
+            issues.push(Issue {
+                id: next_id,
+                title: title.clone(),
+                body: body_param,
+                status: "open".to_string(),
+                created_at: Local::now().to_rfc3339(),
+                resolved_at: None,
+            });
+            let _ = save_issues(&issues);
+            println!("Registered issue #{} '{}' via Web GUI.", next_id, title);
+            send_response(&mut stream, 200, "OK", "application/json", b"{\"status\":\"ok\"}")?;
+        } else {
+            send_response(&mut stream, 400, "Bad Request", "text/plain", b"Missing title")?;
+        }
+    } else if method == "POST" && path == "/api/memory" {
+        let mut topic = String::new();
+        let mut content = String::new();
+        for param in body_str.split('&') {
+            let kv: Vec<&str> = param.split('=').collect();
+            if kv.len() == 2 {
+                if kv[0] == "topic" {
+                    topic = decode_urlencoded(kv[1]);
+                } else if kv[0] == "content" {
+                    content = decode_urlencoded(kv[1]);
+                }
+            }
+        }
+
+        let sanitized_topic = topic
+            .trim()
+            .to_lowercase()
+            .replace(".md", "")
+            .replace(' ', "_")
+            .replace(|c: char| !c.is_alphanumeric() && c != '_', "");
+
+        if !sanitized_topic.is_empty() {
+            let vault_dir = get_base_dir().join("memory/vault");
+            let file_path = vault_dir.join(format!("{}.md", sanitized_topic));
+            if let Ok(mut file) = File::create(file_path) {
+                let _ = file.write_all(content.as_bytes());
+            }
+            send_response(&mut stream, 200, "OK", "application/json", b"{\"status\":\"ok\"}")?;
+        } else {
+            send_response(&mut stream, 400, "Bad Request", "text/plain", b"Invalid topic")?;
+        }
+    } else {
+        send_response(&mut stream, 404, "Not Found", "text/plain", b"Not Found")?;
+    }
+
+    Ok(())
+}
+
+fn run_web_server(port: u16) -> io::Result<()> {
+    let listener = std::net::TcpListener::bind(format!("127.0.0.1:{}", port))?;
+    println!("Orchestrator Web Dashboard running at: http://127.0.0.1:{}", port);
+    for stream in listener.incoming() {
+        if let Ok(stream) = stream {
+            let _ = handle_connection(stream);
+        }
+    }
+    Ok(())
+}
+
 fn main() -> io::Result<()> {
     bootstrap_if_needed()?;
 
@@ -1189,6 +1380,9 @@ fn main() -> io::Result<()> {
             } else {
                 println!("Please specify --create, --list, or --resolve.");
             }
+        }
+        Commands::Dashboard { port } => {
+            run_web_server(port)?;
         }
     }
 

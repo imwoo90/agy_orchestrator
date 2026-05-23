@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AGY Orchestrator Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --panel-bg: rgba(17, 24, 39, 0.7);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --glow-color: rgba(59, 130, 246, 0.15);
+            --primary: #3b82f6;
+            --primary-glow: rgba(59, 130, 246, 0.4);
+            --success: #10b981;
+            --success-glow: rgba(16, 185, 129, 0.3);
+            --warning: #f59e0b;
+            --warning-glow: rgba(245, 158, 11, 0.3);
+            --danger: #ef4444;
+            --danger-glow: rgba(239, 68, 68, 0.3);
+            --text-color: #f3f4f6;
+            --text-muted: #9ca3af;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+            background-image: 
+                radial-gradient(circle at 10% 20%, rgba(59, 130, 246, 0.05) 0%, transparent 40%),
+                radial-gradient(circle at 90% 80%, rgba(16, 185, 129, 0.04) 0%, transparent 40%);
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 40px;
+            border-bottom: 1px solid var(--border-color);
+            background-color: rgba(11, 15, 25, 0.8);
+            backdrop-filter: blur(12px);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .logo-section {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo-section h1 {
+            font-size: 24px;
+            font-weight: 600;
+            background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 50%, #1d4ed8 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -0.5px;
+        }
+
+        .logo-badge {
+            background: linear-gradient(135deg, #3b82f6, #10b981);
+            color: white;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 3px 8px;
+            border-radius: 20px;
+            text-transform: uppercase;
+            box-shadow: 0 0 10px rgba(59, 130, 246, 0.3);
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            color: var(--text-muted);
+            background: rgba(255, 255, 255, 0.03);
+            padding: 6px 14px;
+            border-radius: 30px;
+            border: 1px solid var(--border-color);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--success);
+            box-shadow: 0 0 8px var(--success-glow);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 var(--success-glow); }
+            70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        }
+
+        .dashboard-container {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 24px;
+            padding: 30px 40px;
+            flex-grow: 1;
+            max-width: 1600px;
+            width: 100%;
+            margin: 0 auto;
+        }
+
+        .glass-panel {
+            background-color: var(--panel-bg);
+            backdrop-filter: blur(16px);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+            position: relative;
+            overflow: hidden;
+            transition: border-color 0.3s, box-shadow 0.3s;
+        }
+
+        .glass-panel:hover {
+            border-color: rgba(59, 130, 246, 0.2);
+            box-shadow: 0 8px 32px 0 var(--glow-color);
+        }
+
+        .panel-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-left: 4px solid var(--primary);
+            padding-left: 10px;
+        }
+
+        /* Projects Section */
+        .projects-table-wrapper {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+        }
+
+        th {
+            color: var(--text-muted);
+            font-weight: 500;
+            font-size: 13px;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border-color);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        td {
+            padding: 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+            font-size: 14px;
+        }
+
+        tr:hover td {
+            background-color: rgba(255, 255, 255, 0.01);
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .badge-running { background-color: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); }
+        .badge-completed { background-color: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
+        .badge-failed { background-color: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
+
+        .btn {
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-weight: 500;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 13px;
+            transition: background-color 0.2s, box-shadow 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn:hover {
+            background-color: #2563eb;
+            box-shadow: 0 0 12px var(--primary-glow);
+        }
+
+        .btn-secondary {
+            background-color: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-color);
+            color: var(--text-color);
+        }
+
+        .btn-secondary:hover {
+            background-color: rgba(255, 255, 255, 0.08);
+            box-shadow: none;
+        }
+
+        /* Kanban Board */
+        .kanban-board {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-top: 20px;
+        }
+
+        .kanban-column {
+            background-color: rgba(0, 0, 0, 0.15);
+            border-radius: 12px;
+            padding: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.02);
+            min-height: 400px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .column-header {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .column-count {
+            background-color: rgba(255, 255, 255, 0.05);
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+        }
+
+        .kanban-card {
+            background-color: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 12px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: transform 0.2s, border-color 0.2s;
+            position: relative;
+        }
+
+        .kanban-card:hover {
+            transform: translateY(-2px);
+            border-color: rgba(59, 130, 246, 0.3);
+            background-color: rgba(255, 255, 255, 0.03);
+        }
+
+        .card-id {
+            color: var(--primary);
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .card-title {
+            font-weight: 500;
+            margin-bottom: 8px;
+            line-height: 1.4;
+        }
+
+        .card-body {
+            color: var(--text-muted);
+            font-size: 12px;
+            line-height: 1.4;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            margin-bottom: 8px;
+        }
+
+        .card-footer {
+            font-size: 11px;
+            color: var(--text-muted);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        /* Right Panel: Vault & Logs */
+        .right-layout {
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+
+        /* Vault Editor */
+        .vault-selector {
+            width: 100%;
+            background-color: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 10px;
+            color: var(--text-color);
+            font-family: inherit;
+            margin-bottom: 12px;
+            outline: none;
+        }
+
+        .vault-editor {
+            width: 100%;
+            height: 250px;
+            background-color: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 14px;
+            color: var(--text-color);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            resize: none;
+            outline: none;
+            margin-bottom: 12px;
+        }
+
+        .vault-editor:focus {
+            border-color: rgba(59, 130, 246, 0.4);
+        }
+
+        /* Log Terminal */
+        .log-terminal {
+            background-color: #05070c;
+            border-radius: 8px;
+            padding: 14px;
+            height: 350px;
+            overflow-y: auto;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            line-height: 1.6;
+            border: 1px solid var(--border-color);
+        }
+
+        .log-line {
+            margin-bottom: 6px;
+            white-space: pre-wrap;
+        }
+
+        .log-info { color: #60a5fa; }
+        .log-error { color: #f87171; }
+        .log-debug { color: #9ca3af; }
+
+        /* Modals */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(8px);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-content {
+            background-color: #0f172a;
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            width: 90%;
+            max-width: 500px;
+            padding: 28px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+            animation: modalFade 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        @keyframes modalFade {
+            from { opacity: 0; transform: scale(0.95); }
+            to { opacity: 1; transform: scale(1); }
+        }
+
+        .modal-header {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 20px;
+            cursor: pointer;
+        }
+
+        .form-group {
+            margin-bottom: 18px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+            font-weight: 500;
+        }
+
+        .form-control {
+            width: 100%;
+            background-color: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 10px 12px;
+            color: var(--text-color);
+            font-family: inherit;
+            font-size: 14px;
+            outline: none;
+        }
+
+        .form-control:focus {
+            border-color: rgba(59, 130, 246, 0.4);
+        }
+
+        textarea.form-control {
+            height: 120px;
+            resize: none;
+        }
+
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+            margin-top: 24px;
+        }
+
+        .notification {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            padding: 14px 24px;
+            border-radius: 8px;
+            background-color: rgba(16, 185, 129, 0.9);
+            color: white;
+            backdrop-filter: blur(8px);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+            font-size: 14px;
+            font-weight: 500;
+            z-index: 2000;
+            transform: translateY(100px);
+            opacity: 0;
+            transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s;
+        }
+
+        .notification.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        /* Logs page custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.2);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="logo-section">
+            <h1>AGY Orchestrator</h1>
+            <span class="logo-badge">Core Backend</span>
+        </div>
+        <div class="status-indicator">
+            <span class="status-dot"></span>
+            <span>Daemon: Active</span>
+        </div>
+    </header>
+
+    <div class="dashboard-container">
+        
+        <!-- Left Column: Projects & Issues -->
+        <div style="display: flex; flex-direction: column; gap: 24px;">
+            
+            <!-- Projects Monitor -->
+            <div class="glass-panel">
+                <div class="panel-title">
+                    <span>Background Projects</span>
+                </div>
+                <div class="projects-table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Project Name</th>
+                                <th>PID</th>
+                                <th>Status</th>
+                                <th>Spawned At</th>
+                                <th>Workspace Location</th>
+                            </tr>
+                        </thead>
+                        <tbody id="projects-list">
+                            <tr>
+                                <td colspan="5" style="text-align: center; color: var(--text-muted);">Loading projects...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Issues Board -->
+            <div class="glass-panel">
+                <div class="panel-title">
+                    <span>Evolution Issue Board</span>
+                    <button class="btn" onclick="openModal('create-issue-modal')">+ Create Issue</button>
+                </div>
+                <div class="kanban-board">
+                    <div class="kanban-column">
+                        <div class="column-header">
+                            <span>Open</span>
+                            <span class="column-count" id="count-open">0</span>
+                        </div>
+                        <div id="col-open" style="display:contents;"></div>
+                    </div>
+                    <div class="kanban-column">
+                        <div class="column-header">
+                            <span>In Progress</span>
+                            <span class="column-count" id="count-progress">0</span>
+                        </div>
+                        <div id="col-progress" style="display:contents;"></div>
+                    </div>
+                    <div class="kanban-column">
+                        <div class="column-header">
+                            <span>Resolved</span>
+                            <span class="column-count" id="count-resolved">0</span>
+                        </div>
+                        <div id="col-resolved" style="display:contents;"></div>
+                    </div>
+                    <div class="kanban-column">
+                        <div class="column-header">
+                            <span>Failed</span>
+                            <span class="column-count" id="count-failed">0</span>
+                        </div>
+                        <div id="col-failed" style="display:contents;"></div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Right Column: Vault Editor & Logs -->
+        <div class="right-layout">
+            
+            <!-- Vault Editor -->
+            <div class="glass-panel">
+                <div class="panel-title">
+                    <span>Knowledge Vault Notes</span>
+                    <button class="btn btn-secondary" onclick="saveVaultNote()">Save Note</button>
+                </div>
+                <select class="vault-selector" id="vault-note-selector" onchange="loadSelectedNote()">
+                    <option value="">-- Select Note --</option>
+                </select>
+                <textarea class="vault-editor" id="vault-editor" placeholder="Select a memory card from the dropdown to edit..."></textarea>
+            </div>
+
+            <!-- Log Terminal -->
+            <div class="glass-panel" style="flex-grow: 1; display: flex; flex-direction: column;">
+                <div class="panel-title">
+                    <span>System Daemon Logs</span>
+                </div>
+                <div class="log-terminal" id="log-terminal">
+                    <div class="log-line log-debug">Polled at startup...</div>
+                </div>
+            </div>
+
+        </div>
+
+    </div>
+
+    <!-- Create Issue Modal -->
+    <div class="modal" id="create-issue-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <span>Create Self-Evolution Issue</span>
+                <button class="modal-close" onclick="closeModal('create-issue-modal')">&times;</button>
+            </div>
+            <form id="create-issue-form" onsubmit="submitIssue(event)">
+                <div class="form-group">
+                    <label for="issue-title">Issue Title</label>
+                    <input type="text" id="issue-title" class="form-control" required placeholder="e.g. Add custom CLI logs formatting">
+                </div>
+                <div class="form-group">
+                    <label for="issue-body">Detailed Description</label>
+                    <textarea id="issue-body" class="form-control" placeholder="Describe the changes or new features you want the agent to build..."></textarea>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('create-issue-modal')">Cancel</button>
+                    <button type="submit" class="btn">Register & Evolve</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="notification" id="toast">Changes saved successfully!</div>
+
+    <script>
+        // Modal functions
+        function openModal(id) {
+            document.getElementById(id).style.display = 'flex';
+        }
+
+        function closeModal(id) {
+            document.getElementById(id).style.display = 'none';
+        }
+
+        function showNotification(message, isError = false) {
+            const toast = document.getElementById('toast');
+            toast.innerText = message;
+            toast.style.backgroundColor = isError ? 'rgba(239, 68, 68, 0.9)' : 'rgba(16, 185, 129, 0.9)';
+            toast.classList.add('show');
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 3000);
+        }
+
+        // Fetch Dashboard Data
+        async function fetchProjects() {
+            try {
+                const res = await fetch('/api/projects');
+                const projects = await res.json();
+                const tbody = document.getElementById('projects-list');
+                
+                const keys = Object.keys(projects);
+                if (keys.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted);">No background tasks registered.</td></tr>`;
+                    return;
+                }
+
+                tbody.innerHTML = keys.map(name => {
+                    const info = projects[name];
+                    const badgeClass = `badge badge-${info.status}`;
+                    const time = info.spawned_at.replace('T', ' ').substring(0, 19);
+                    return `
+                        <tr>
+                            <td style="font-weight: 500; color: #60a5fa;">${name}</td>
+                            <td style="font-family: 'JetBrains Mono', monospace; font-size: 13px;">${info.pid}</td>
+                            <td><span class="${badgeClass}">${info.status}</span></td>
+                            <td style="color: var(--text-muted); font-size: 13px;">${time}</td>
+                            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-muted);">${info.path}</td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch (err) {
+                console.error("Failed to fetch projects:", err);
+            }
+        }
+
+        async function fetchIssues() {
+            try {
+                const res = await fetch('/api/issues');
+                const issues = await res.json();
+                
+                const colOpen = document.getElementById('col-open');
+                const colProgress = document.getElementById('col-progress');
+                const colResolved = document.getElementById('col-resolved');
+                const colFailed = document.getElementById('col-failed');
+
+                colOpen.innerHTML = '';
+                colProgress.innerHTML = '';
+                colResolved.innerHTML = '';
+                colFailed.innerHTML = '';
+
+                let openCount = 0, progressCount = 0, resolvedCount = 0, failedCount = 0;
+
+                issues.forEach(issue => {
+                    const time = issue.created_at.substring(0, 10);
+                    const cardHtml = `
+                        <div class="kanban-card">
+                            <div class="card-id">#${issue.id}</div>
+                            <div class="card-title">${issue.title}</div>
+                            <div class="card-body">${issue.body}</div>
+                            <div class="card-footer">
+                                <span>${time}</span>
+                            </div>
+                        </div>
+                    `;
+
+                    if (issue.status === 'open') {
+                        colOpen.innerHTML += cardHtml;
+                        openCount++;
+                    } else if (issue.status === 'in-progress') {
+                        colProgress.innerHTML += cardHtml;
+                        progressCount++;
+                    } else if (issue.status === 'resolved') {
+                        colResolved.innerHTML += cardHtml;
+                        resolvedCount++;
+                    } else if (issue.status === 'failed') {
+                        colFailed.innerHTML += cardHtml;
+                        failedCount++;
+                    }
+                });
+
+                document.getElementById('count-open').innerText = openCount;
+                document.getElementById('count-progress').innerText = progressCount;
+                document.getElementById('count-resolved').innerText = resolvedCount;
+                document.getElementById('count-failed').innerText = failedCount;
+            } catch (err) {
+                console.error("Failed to fetch issues:", err);
+            }
+        }
+
+        async function fetchLogs() {
+            try {
+                const res = await fetch('/api/logs');
+                const text = await res.text();
+                const logTerminal = document.getElementById('log-terminal');
+                
+                const isScrolledToBottom = logTerminal.scrollHeight - logTerminal.clientHeight <= logTerminal.scrollTop + 50;
+
+                const lines = text.trim().split('\n');
+                logTerminal.innerHTML = lines.map(line => {
+                    let typeClass = 'log-debug';
+                    if (line.includes('INFO:')) typeClass = 'log-info';
+                    if (line.includes('ERROR:')) typeClass = 'log-error';
+                    return `<div class="log-line ${typeClass}">${line}</div>`;
+                }).join('');
+
+                if (isScrolledToBottom) {
+                    logTerminal.scrollTop = logTerminal.scrollHeight;
+                }
+            } catch (err) {
+                console.error("Failed to fetch logs:", err);
+            }
+        }
+
+        // Vault list & editing
+        let vaultNotesMap = {};
+        async function fetchVaultNotes() {
+            try {
+                const res = await fetch('/api/vault');
+                const notes = await res.json();
+                const selector = document.getElementById('vault-note-selector');
+                
+                const currentSelection = selector.value;
+                selector.innerHTML = '<option value="">-- Select Note --</option>';
+                
+                vaultNotesMap = {};
+                notes.forEach(note => {
+                    vaultNotesMap[note.name] = note.content;
+                    const opt = document.createElement('option');
+                    opt.value = note.name;
+                    opt.innerText = note.name;
+                    selector.appendChild(opt);
+                });
+
+                if (currentSelection && vaultNotesMap[currentSelection]) {
+                    selector.value = currentSelection;
+                }
+            } catch (err) {
+                console.error("Failed to fetch vault notes:", err);
+            }
+        }
+
+        function loadSelectedNote() {
+            const selector = document.getElementById('vault-note-selector');
+            const editor = document.getElementById('vault-editor');
+            const noteName = selector.value;
+            
+            if (noteName && vaultNotesMap[noteName] !== undefined) {
+                editor.value = vaultNotesMap[noteName];
+            } else {
+                editor.value = '';
+            }
+        }
+
+        async function saveVaultNote() {
+            const selector = document.getElementById('vault-note-selector');
+            const editor = document.getElementById('vault-editor');
+            const noteName = selector.value;
+            
+            if (!noteName) {
+                showNotification("Please select a note to save.", true);
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/memory', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: `topic=${encodeURIComponent(noteName.replace('.md', ''))}&content=${encodeURIComponent(editor.value)}`
+                });
+                
+                if (res.ok) {
+                    showNotification("Memory note saved successfully!");
+                    fetchVaultNotes();
+                } else {
+                    showNotification("Failed to save note.", true);
+                }
+            } catch (err) {
+                showNotification("Network error occurred.", true);
+                console.error(err);
+            }
+        }
+
+        // Create Issue Submit
+        async function submitIssue(e) {
+            e.preventDefault();
+            const title = document.getElementById('issue-title').value;
+            const body = document.getElementById('issue-body').value;
+
+            try {
+                const res = await fetch('/api/issue', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: `title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`
+                });
+
+                if (res.ok) {
+                    showNotification("Self-evolution issue registered!");
+                    closeModal('create-issue-modal');
+                    document.getElementById('create-issue-form').reset();
+                    fetchIssues();
+                } else {
+                    showNotification("Failed to register issue.", true);
+                }
+            } catch (err) {
+                showNotification("Network error occurred.", true);
+                console.error(err);
+            }
+        }
+
+        // Setup Polling Loops
+        fetchProjects();
+        fetchIssues();
+        fetchLogs();
+        fetchVaultNotes();
+
+        setInterval(() => {
+            fetchProjects();
+            fetchIssues();
+            fetchLogs();
+        }, 2000);
+    </script>
+</body>
+</html>

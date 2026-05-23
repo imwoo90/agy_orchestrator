@@ -44,7 +44,16 @@ Welcome! This workspace acts as a central **Control Tower (Orchestrator)** to ma
     - `--status`: Checks if the daemon is currently running.
     - `--run`: Runs the daemon in the foreground (blocking loop).
   - **`self-upgrade`**: Safely compiles, runs tests, swaps the binary, and hot-reloads the active orchestrator daemon with automatic rollback support on failure.
+    - `--resolve-issue <id>`: Resolves an issue ID and commits/pushes results on successful upgrade.
+  - **`issue`**: Registers and tracks self-evolution issues.
+    - `--create "<title>"`: Registers a new issue with a title.
+    - `--body "<body>"`: Detailed description of the issue.
+    - `--list`: Lists all issues and their status (`open`, `in-progress`, `resolved`, `failed`).
+     - `--resolve <id>`: Manually resolves an issue by ID.
+  - **`dashboard`**: Starts the embedded zero-dependency web dashboard.
+    - `--port <port>`: Port to bind the server to (default is 8080).
 - **`~/.agy_orchestrator/projects.json`**: State registry keeping track of active and historical runs.
+- **`~/.agy_orchestrator/issues.json`**: Local issue database storing self-evolution issues.
 - **`~/.agy_orchestrator/memory/system_instructions.md`**: Fixed operating manual (force-updated by the binary).
 - **`~/.agy_orchestrator/memory/vault/`**: Obsidian-style Personal Knowledge Vault folder containing user habits.
 - **`~/.agy_orchestrator/notifications.log`**: Running log of daemon notification updates (completions, failures).
