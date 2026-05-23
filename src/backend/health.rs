@@ -1,31 +1,13 @@
-use serde::{Deserialize, Serialize};
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct HealthCheckResult {
-    pub target: String,
-    pub healthy: bool,
-    pub message: String,
-    pub checked_at: String,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
+use crate::frontend::app::{HealthCheckResult, Issue};
 use std::fs::{self, File};
-#[cfg(not(target_arch = "wasm32"))]
 use std::io::{self, Write};
-#[cfg(not(target_arch = "wasm32"))]
 use std::path::{Path, PathBuf};
-#[cfg(not(target_arch = "wasm32"))]
 use std::process::{Command, Stdio};
-#[cfg(not(target_arch = "wasm32"))]
 use chrono::Local;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::vault::get_base_dir;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::state::load_state;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::issue::{load_issues, save_issues, Issue};
+use super::vault::get_base_dir;
+use super::state::load_state;
+use super::issue::{load_issues, save_issues};
 
-#[cfg(not(target_arch = "wasm32"))]
 pub fn find_workspace_root() -> io::Result<PathBuf> {
     let mut current_dir = std::env::current_exe()?;
     while current_dir.pop() {
@@ -36,7 +18,6 @@ pub fn find_workspace_root() -> io::Result<PathBuf> {
     Err(io::Error::new(io::ErrorKind::NotFound, "Workspace Cargo.toml not found"))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub fn save_health_results(results: &[HealthCheckResult]) -> io::Result<()> {
     let path = get_base_dir().join("health.json");
     let file = File::create(path)?;
@@ -44,7 +25,6 @@ pub fn save_health_results(results: &[HealthCheckResult]) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub fn run_health_checks() -> io::Result<Vec<HealthCheckResult>> {
     let base_dir = get_base_dir();
     let notifications_path = base_dir.join("notifications.log");

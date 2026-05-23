@@ -1,26 +1,10 @@
-use serde::{Deserialize, Serialize};
-#[cfg(not(target_arch = "wasm32"))]
+use crate::frontend::app::ProjectInfo;
 use std::collections::HashMap;
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct ProjectInfo {
-    pub path: String,
-    pub goal: String,
-    pub pid: u32,
-    pub status: String,
-    pub spawned_at: String,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 use std::fs::File;
-#[cfg(not(target_arch = "wasm32"))]
 use std::io::{self, Read};
-#[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::vault::get_base_dir;
+use super::vault::get_base_dir;
 
-#[cfg(not(target_arch = "wasm32"))]
 pub fn load_state() -> HashMap<String, ProjectInfo> {
     let path = get_base_dir().join("projects.json");
     if !path.exists() {
@@ -33,7 +17,6 @@ pub fn load_state() -> HashMap<String, ProjectInfo> {
     serde_json::from_reader(file).unwrap_or_else(|_| HashMap::new())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub fn save_state(state: &HashMap<String, ProjectInfo>) -> io::Result<()> {
     let path = get_base_dir().join("projects.json");
     let file = File::create(path)?;
@@ -41,7 +24,6 @@ pub fn save_state(state: &HashMap<String, ProjectInfo>) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub fn is_pid_alive(pid: u32) -> bool {
     let status_path = format!("/proc/{}/status", pid);
     if let Ok(mut file) = File::open(status_path) {
@@ -57,7 +39,6 @@ pub fn is_pid_alive(pid: u32) -> bool {
     false
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub fn check_project_status(_name: &str, info: &mut ProjectInfo) -> String {
     if info.status != "running" {
         return info.status.clone();

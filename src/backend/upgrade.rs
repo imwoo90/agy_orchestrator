@@ -6,9 +6,9 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use chrono::Local;
 
-use crate::issue::{load_issues, save_issues};
-use crate::daemon::{is_daemon_running, get_daemon_pid};
-use crate::health::find_workspace_root;
+use super::issue::{load_issues, save_issues};
+use super::daemon::{is_daemon_running, get_daemon_pid};
+use super::health::{find_workspace_root};
 
 pub fn rollback_upgrade(current_exe: &Path, backup_exe: &Path, restart_daemon: bool, reason: &str) -> io::Result<()> {
     eprintln!("CRITICAL ERROR: {}. Initiating rollback...", reason);

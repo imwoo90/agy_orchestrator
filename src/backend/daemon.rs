@@ -6,10 +6,11 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use chrono::Local;
 
-use crate::vault::get_base_dir;
-use crate::state::{load_state, save_state, is_pid_alive, ProjectInfo};
-use crate::issue::{load_issues, save_issues};
-use crate::health::{run_health_checks, find_workspace_root};
+use crate::frontend::app::ProjectInfo;
+use super::vault::get_base_dir;
+use super::state::{load_state, save_state, is_pid_alive};
+use super::issue::{load_issues, save_issues};
+use super::health::{run_health_checks, find_workspace_root};
 
 pub fn get_daemon_pid() -> Option<u32> {
     let pid_path = get_base_dir().join("daemon.pid");

@@ -7,12 +7,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use chrono::Local;
 
-use crate::vault::{get_base_dir, bootstrap_if_needed};
-use crate::state::{load_state, save_state, check_project_status, ProjectInfo};
-use crate::issue::{load_issues, save_issues, Issue};
-use crate::health::run_health_checks;
-use crate::daemon::{is_daemon_running, get_daemon_pid, run_daemon_loop};
-use crate::upgrade::run_self_upgrade;
+use crate::frontend::app::{ProjectInfo, Issue};
+use super::vault::{get_base_dir, bootstrap_if_needed};
+use super::state::{load_state, save_state, check_project_status};
+use super::issue::{load_issues, save_issues};
+use super::health::run_health_checks;
+use super::daemon::{is_daemon_running, get_daemon_pid, run_daemon_loop};
+use super::upgrade::run_self_upgrade;
 
 #[derive(Parser, Debug)]
 #[command(name = "orchestrate")]
@@ -61,6 +62,13 @@ pub enum Commands {
         topic: String,
         #[arg(long)]
         content: String,
+    },
+    /// Inject a knowledge note from the vault into a project's context.md
+    InjectMemory {
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        query: String,
     },
     /// Manage the background orchestrator daemon
     Daemon {
@@ -116,9 +124,10 @@ pub enum CliResult {
 pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
     bootstrap_if_needed()?;
 
+    let base_dir = get_base_dir();
+
     match cli.command {
         Commands::Spawn { name, path, goal } => {
-            let base_dir = get_base_dir();
             let project_path = fs::canonicalize(Path::new(&path))
                 .unwrap_or_else(|_| {
                     let p = Path::new(&path);
@@ -151,6 +160,65 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
             let full_prompt = format!("{}{}", goal, report_instruction);
             let log_file_path = base_dir.join("logs").join(format!("{}.log", name));
             let log_file = File::create(&log_file_path)?;
+
+            // JIT Knowledge Auto-Injection on Spawn
+            let vault_dir = base_dir.join("memory/vault");
+            if vault_dir.exists() {
+                let name_lower = name.to_lowercase();
+                let mut keywords: std::collections::HashSet<String> = goal
+                    .to_lowercase()
+                    .split(|c: char| !c.is_alphanumeric())
+                    .filter(|s| s.len() >= 4)
+                    .map(|s| s.to_string())
+                    .collect();
+                keywords.insert(name_lower.clone());
+
+                let mut injected_notes = Vec::new();
+                if let Ok(entries) = fs::read_dir(&vault_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.extension().map_or(false, |ext| ext == "md") {
+                            let filename = path.file_name().unwrap().to_string_lossy().to_string();
+                            let mut file_content = String::new();
+                            if let Ok(mut file) = File::open(&path) {
+                                if file.read_to_string(&mut file_content).is_ok() {
+                                    let filename_lower = filename.to_lowercase();
+                                    let content_lower = file_content.to_lowercase();
+                                    
+                                    let match_by_name = filename_lower.contains(&name_lower);
+                                    let match_by_keyword = keywords.iter().any(|kw| {
+                                        kw != "this" && kw != "that" && kw != "with" && kw != "from" &&
+                                        (filename_lower.contains(kw) || content_lower.contains(kw))
+                                    });
+
+                                    if match_by_name || match_by_keyword {
+                                        injected_notes.push((filename, file_content));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if !injected_notes.is_empty() {
+                    let context_path = Path::new(&project_path_str).join("context.md");
+                    if let Ok(mut context_file) = fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&context_path)
+                    {
+                        let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
+                        for (filename, content) in injected_notes {
+                            let _ = writeln!(
+                                context_file,
+                                "\n\n# 🧠 Auto-Injected Knowledge from Note '{}' at {}\n\n{}",
+                                filename, timestamp, content.trim()
+                            );
+                            println!("JIT: Auto-injected matching knowledge card '{}' into project context.", filename);
+                        }
+                    }
+                }
+            }
 
             let mut cmd = Command::new("agy");
             cmd.arg("--add-dir")
@@ -260,7 +328,6 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
             } else {
                 println!("\nReport file not found at: {}", report_path.display());
                 if status == "failed" {
-                    let base_dir = get_base_dir();
                     println!("Note: Project failed. Check logs for details: {}", base_dir.join("logs").join(format!("{}.log", name)).display());
                 }
             }
@@ -288,9 +355,9 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
 
             let context_path = Path::new(&path_str).join("context.md");
             if context_path.exists() {
-                println!("\n--- [context.md Content] ---");
                 let mut context_content = String::new();
                 File::open(context_path)?.read_to_string(&mut context_content)?;
+                println!("\n--- [context.md Content] ---");
                 println!("{}", context_content);
             } else {
                 println!("\nNo context.md file exists yet in the project directory.");
@@ -327,6 +394,59 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
             let mut report_content = String::new();
             File::open(&report_path)?.read_to_string(&mut report_content)?;
 
+            // Parse Lessons Learned / 교훈 / 지식 Section
+            let mut lines = report_content.lines().peekable();
+            let mut lessons_content = String::new();
+            let mut in_lessons = false;
+            
+            while let Some(line) = lines.next() {
+                let trimmed = line.trim();
+                if trimmed.starts_with('#') {
+                    let header_title = trimmed.trim_start_matches('#').trim().to_lowercase();
+                    if header_title.contains("lessons learned") || header_title == "교훈" || header_title == "지식" {
+                        in_lessons = true;
+                        continue;
+                    } else {
+                        in_lessons = false;
+                    }
+                }
+                
+                if in_lessons {
+                    lessons_content.push_str(line);
+                    lessons_content.push('\n');
+                }
+            }
+
+            let lessons_trimmed = lessons_content.trim();
+            if !lessons_trimmed.is_empty() {
+                let vault_dir = base_dir.join("memory/vault");
+                fs::create_dir_all(&vault_dir)?;
+                let lessons_file_path = vault_dir.join(format!("{}_lessons.md", name));
+                let mut file = File::create(&lessons_file_path)?;
+                writeln!(
+                    file,
+                    "# 🧠 Lessons Learned from Project '{}'\n\n*Saved on: {}*\n\n{}",
+                    name,
+                    Local::now().format("%Y-%m-%d %H:%M:%S"),
+                    lessons_trimmed
+                )?;
+                println!("Extracted lessons learned and saved to {}", lessons_file_path.display());
+
+                // Log notification
+                if let Ok(mut log_file) = fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&base_dir.join("notifications.log"))
+                {
+                    let _ = writeln!(
+                        log_file,
+                        "[{}] INFO: Extracted lessons learned from '{}' and saved to vault.",
+                        Local::now().format("%Y-%m-%d %H:%M:%S"),
+                        name
+                    );
+                }
+            }
+
             let context_path = Path::new(&path_str).join("context.md");
             let mut context_file = fs::OpenOptions::new()
                 .create(true)
@@ -346,7 +466,7 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
             println!("Updated status to 'completed' in projects.json.");
         }
         Commands::QueryMemory { query } => {
-            let vault_dir = get_base_dir().join("memory/vault");
+            let vault_dir = base_dir.join("memory/vault");
             if !vault_dir.exists() {
                 println!("Memory vault directory not found.");
                 return Ok(CliResult::Exit);
@@ -386,7 +506,7 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
             }
         }
         Commands::UpdateMemory { topic, content } => {
-            let vault_dir = get_base_dir().join("memory/vault");
+            let vault_dir = base_dir.join("memory/vault");
             fs::create_dir_all(&vault_dir)?;
 
             let sanitized_topic = topic
@@ -406,8 +526,66 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
 
             println!("Successfully updated memory note: {}", file_path.display());
         }
+        Commands::InjectMemory { project, query } => {
+            let mut state = load_state();
+            let info = match state.get_mut(&project) {
+                Some(i) => i,
+                None => {
+                    eprintln!("Error: Project '{}' not found in projects.json.", project);
+                    std::process::exit(1);
+                }
+            };
+
+            let vault_dir = base_dir.join("memory/vault");
+            if !vault_dir.exists() {
+                eprintln!("Error: Memory vault directory not found.");
+                std::process::exit(1);
+            }
+
+            let query_lower = query.to_lowercase();
+            let mut matched_notes = Vec::new();
+
+            let entries = fs::read_dir(vault_dir)?;
+            for entry in entries {
+                let entry = entry?;
+                let path = entry.path();
+                if path.extension().map_or(false, |ext| ext == "md") {
+                    let filename = path.file_name().unwrap().to_string_lossy().to_string();
+                    let mut file_content = String::new();
+                    if let Ok(mut file) = File::open(&path) {
+                        if file.read_to_string(&mut file_content).is_ok() {
+                            let match_in_name = filename.to_lowercase().contains(&query_lower);
+                            let match_in_content = file_content.to_lowercase().contains(&query_lower);
+                            if match_in_name || match_in_content {
+                                matched_notes.push((filename, file_content));
+                            }
+                        }
+                    }
+                }
+            }
+
+            if matched_notes.is_empty() {
+                println!("No matching memory notes found in the vault for query: '{}'", query);
+                return Ok(CliResult::Exit);
+            }
+
+            let context_path = Path::new(&info.path).join("context.md");
+            let mut context_file = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&context_path)?;
+
+            let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
+            for (filename, content) in matched_notes {
+                writeln!(
+                    context_file,
+                    "\n\n# 🧠 Injected Knowledge from Note '{}' at {}\n\n{}",
+                    filename, timestamp, content.trim()
+                )?;
+                println!("Injected knowledge from note '{}' into project '{}' context.md", filename, project);
+            }
+        }
         Commands::Daemon { start, stop, status, run } => {
-            let base_dir = get_base_dir();
             let pid_path = base_dir.join("daemon.pid");
 
             if run {
@@ -423,14 +601,12 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
                 let mut cmd = Command::new(&current_exe);
                 cmd.arg("daemon").arg("--run");
 
-                // Redirect stdout/stderr to a daemon log file to avoid panic on broken pipe
                 let daemon_log_path = base_dir.join("daemon.log");
                 let daemon_log_file = File::create(&daemon_log_path)?;
                 cmd.stdout(Stdio::from(daemon_log_file.try_clone()?));
                 cmd.stderr(Stdio::from(daemon_log_file));
                 cmd.stdin(Stdio::null());
 
-                // Detach process on Unix
                 #[cfg(unix)]
                 {
                     use std::os::unix::process::CommandExt;
@@ -461,7 +637,6 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
                 let pid = get_daemon_pid().unwrap();
                 println!("Stopping daemon (PID: {})...", pid);
 
-                // Kill process on Unix
                 let _ = Command::new("kill").arg(pid.to_string()).status();
                 let _ = fs::remove_file(&pid_path);
 
