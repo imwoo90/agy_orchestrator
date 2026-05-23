@@ -144,6 +144,61 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
                 }
             }
 
+            // 1. AGENTS.md handling (Project Playbook)
+            let agents_path = Path::new(&project_path_str).join("AGENTS.md");
+            if !agents_path.exists() {
+                if let Ok(mut file) = File::create(&agents_path) {
+                    let default_agents_content = format!(
+                        "# Project Playbook - {}\n\n\
+                         ## 📐 Project Architecture\n\
+                         - Describe the folder layout, main files, and dependencies of this project.\n\n\
+                         ## 🛠️ Coding Conventions\n\
+                         - Define coding standards, framework versions, error handling practices, and lint configurations.\n\n\
+                         ## ⚙️ Preferred Tools & Workflow\n\
+                         - Document repo-specific commands (e.g. `cargo check`, `dx build`), ports, and deployment scripts.\n",
+                        name
+                    );
+                    let _ = file.write_all(default_agents_content.as_bytes());
+                    println!("Hot Memory: Initialized default AGENTS.md (Project Playbook) for '{}'.", name);
+                }
+            }
+
+            let mut agents_inject = String::new();
+            if let Ok(mut file) = File::open(&agents_path) {
+                let mut content = String::new();
+                if file.read_to_string(&mut content).is_ok() && !content.trim().is_empty() {
+                    agents_inject = format!(
+                        "\n\n==================================================\n\
+                         [PROJECT-SPECIFIC ARCHITECTURE & CONVENTIONS - AGENTS.MD]\n\
+                         (This is the playbook defining developer conventions and architecture rules for this project. Follow these guidelines!)\n\n\
+                         {}\n\
+                         ==================================================\n\n",
+                        content.trim()
+                    );
+                    println!("JIT: Injected project playbook (AGENTS.md) into spawn prompt.");
+                }
+            }
+
+            // 2. context.md handling (Hot Memory)
+            let context_path = Path::new(&project_path_str).join("context.md");
+            let mut context_inject = String::new();
+            if context_path.exists() {
+                if let Ok(mut file) = File::open(&context_path) {
+                    let mut content = String::new();
+                    if file.read_to_string(&mut content).is_ok() && !content.trim().is_empty() {
+                        context_inject = format!(
+                            "\n\n==================================================\n\
+                             [ACTIVE PROJECT CONTEXT - HOT MEMORY]\n\
+                             (This contains the current state, architecture, and constraints of the project. Please align with this context!)\n\n\
+                             {}\n\
+                             ==================================================\n\n",
+                            content.trim()
+                        );
+                        println!("JIT: Injected active project context (Hot Memory) into spawn prompt.");
+                    }
+                }
+            }
+
             let report_instruction = format!(
                 "\n\n==================================================\n\
                  SYSTEM INSTRUCTIONS FOR COMPLETION:\n\
@@ -152,12 +207,19 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
                  1. A summary of completed tasks.\n\
                  2. Crucial design/architectural choices made.\n\
                  3. Minor choices resolved autonomously.\n\
-                 4. A section 'CRITICAL ITEMS FOR REVIEW' containing only items that require manual review or escalation (e.g. costs, API keys, blocker errors). If none, clearly state 'None'.\n\
-                 Ensure this report is written before you finish.",
+                 4. A section 'CRITICAL ITEMS FOR REVIEW' containing only items that require manual review or escalation (e.g. costs, API keys, blocker errors). If none, clearly state 'None'.\n\n\
+                 In addition, you MUST update/overwrite the 'context.md' file in the project root.\n\
+                 The 'context.md' acts as the high-density Hot Memory (max 2000 chars) for this project, detailing:\n\
+                 - Overall project description and current architecture.\n\
+                 - The latest completed changes.\n\
+                 - Clear next steps / remaining Todo items.\n\
+                 Keep 'context.md' concise and dense. (Detailed historical logs will be archived automatically in 'context_history.md' during consolidate, so do not accumulate old logs inside 'context.md').\n\n\
+                 You may also update/refine the 'AGENTS.md' playbook if new permanent developer rules or structure conventions have been established.\n\
+                 Ensure both 'report.md' and 'context.md' are updated before you finish.",
                 project_path_str
             );
 
-            let full_prompt = format!("{}{}", goal, report_instruction);
+            let full_prompt = format!("{}{}{}{}", agents_inject, context_inject, goal, report_instruction);
             let log_file_path = base_dir.join("logs").join(format!("{}.log", name));
             let log_file = File::create(&log_file_path)?;
 
@@ -353,14 +415,37 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
             println!("Path: {}", path_str);
             println!("Status: {}", status);
 
+            let agents_path = Path::new(&path_str).join("AGENTS.md");
+            if agents_path.exists() {
+                let mut agents_content = String::new();
+                if File::open(&agents_path).and_then(|mut f| f.read_to_string(&mut agents_content)).is_ok() {
+                    println!("\n--- [AGENTS.md Content (Project Playbook)] ---");
+                    println!("{}", agents_content);
+                }
+            } else {
+                println!("\nNo AGENTS.md (Project Playbook) file exists yet in the project directory.");
+            }
+
             let context_path = Path::new(&path_str).join("context.md");
             if context_path.exists() {
                 let mut context_content = String::new();
                 File::open(context_path)?.read_to_string(&mut context_content)?;
-                println!("\n--- [context.md Content] ---");
+                println!("\n--- [context.md Content (Hot Memory)] ---");
                 println!("{}", context_content);
             } else {
-                println!("\nNo context.md file exists yet in the project directory.");
+                println!("\nNo context.md (Hot Memory) file exists yet in the project directory.");
+            }
+
+            let history_path = Path::new(&path_str).join("context_history.md");
+            if history_path.exists() {
+                println!("\n--- [context_history.md Status (Cold Memory)] ---");
+                if let Ok(metadata) = fs::metadata(&history_path) {
+                    println!("Archive file exists. Size: {} bytes", metadata.len());
+                } else {
+                    println!("Archive file exists.");
+                }
+            } else {
+                println!("\nNo context_history.md (Cold Memory) file exists yet.");
             }
         }
         Commands::Consolidate { name } => {
@@ -447,22 +532,45 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
                 }
             }
 
-            let context_path = Path::new(&path_str).join("context.md");
-            let mut context_file = fs::OpenOptions::new()
+            let history_path = Path::new(&path_str).join("context_history.md");
+            let mut history_file = fs::OpenOptions::new()
                 .create(true)
                 .append(true)
-                .open(&context_path)?;
+                .open(&history_path)?;
 
             let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
             writeln!(
-                context_file,
+                history_file,
                 "\n\n# 📅 History log from {} (Spawned at {})\n\n{}",
                 timestamp, spawned_at, report_content
             )?;
 
+            // Fallback: If context.md (Hot Memory) does not exist, initialize it with report contents
+            let context_path = Path::new(&path_str).join("context.md");
+            if !context_path.exists() {
+                let mut context_file = File::create(&context_path)?;
+                writeln!(
+                    context_file,
+                    "# Active Project Context\n\n\
+                     ## Project Name: {}\n\
+                     ## Status: Completed (Initialized from fallback at {})\n\n\
+                     ### Last Task Summary\n\
+                     {}",
+                    name, timestamp, report_content
+                )?;
+                println!("Hot Memory: Initialized context.md from report fallback.");
+            }
+
+            // Clean up report.md as it is consolidated into context_history.md
+            if let Err(e) = fs::remove_file(&report_path) {
+                eprintln!("Warning: Failed to remove report.md at {}: {}", report_path.display(), e);
+            } else {
+                println!("Cleaned up report.md after consolidation.");
+            }
+
             save_state(&state)?;
 
-            println!("Successfully consolidated report.md into context.md for project '{}'.", name);
+            println!("Successfully consolidated report.md into context_history.md for project '{}'.", name);
             println!("Updated status to 'completed' in projects.json.");
         }
         Commands::QueryMemory { query } => {
