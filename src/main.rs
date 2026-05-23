@@ -236,6 +236,32 @@ async fn spawn_project_task(name: String, path: String, goal: String) -> Result<
     }
 }
 
+
+#[server]
+async fn get_upgrade_status() -> Result<Option<(String, String)>, ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Ok(backend::upgrade::check_latest_release().map_err(|e| ServerFnError::new(e.to_string()))?)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
+}
+
+#[server]
+async fn trigger_remote_upgrade(download_url: String) -> Result<(), ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        backend::upgrade::run_remote_upgrade(&download_url).map_err(|e| ServerFnError::new(e.to_string()))?;
+        Ok(())
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
+}
+
 // Entrypoint
 fn main() -> std::io::Result<()> {
     #[cfg(not(target_arch = "wasm32"))]

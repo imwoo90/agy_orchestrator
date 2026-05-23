@@ -221,3 +221,158 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
     println!("Successfully upgraded to the new version!");
     Ok(())
 }
+
+pub fn check_latest_release() -> io::Result<Option<(String, String)>> {
+    let output = Command::new("curl")
+        .arg("-s")
+        .arg("-H")
+        .arg("User-Agent: agy-orchestrator")
+        .arg("https://api.github.com/repos/imwoo90/agy_orchestrator/releases/latest")
+        .output()?;
+
+    if !output.status.success() {
+        return Err(io::Error::new(io::ErrorKind::Other, "Failed to call GitHub API via curl"));
+    }
+
+    let val: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Failed to parse JSON: {}", e)))?;
+
+    let tag_name = match val.get("tag_name").and_then(|t| t.as_str()) {
+        Some(t) => t.to_string(),
+        None => return Ok(None),
+    };
+
+    let current_version = format!("v{}", env!("CARGO_PKG_VERSION"));
+    if tag_name == current_version {
+        return Ok(None);
+    }
+
+    // Find binary asset
+    if let Some(assets) = val.get("assets").and_then(|a| a.as_array()) {
+        for asset in assets {
+            if let Some(name) = asset.get("name").and_then(|n| n.as_str()) {
+                if name == "agy-orchestrator" {
+                    if let Some(url) = asset.get("browser_download_url").and_then(|u| u.as_str()) {
+                        return Ok(Some((tag_name, url.to_string())));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+pub fn run_remote_upgrade(download_url: &str) -> io::Result<()> {
+    let current_exe = std::env::current_exe()?;
+    let parent_dir = current_exe.parent().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Parent directory of current exe not found"))?;
+    let temp_exe = parent_dir.join("agy-orchestrator-new");
+
+    println!("Downloading new binary from {}...", download_url);
+    let download_status = Command::new("curl")
+        .arg("-L")
+        .arg("-o")
+        .arg(&temp_exe)
+        .arg(download_url)
+        .status()?;
+
+    if !download_status.success() {
+        return Err(io::Error::new(io::ErrorKind::Other, "Failed to download new binary via curl"));
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&temp_exe)?.permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&temp_exe, perms)?;
+    }
+
+    println!("Performing sanity checks on the downloaded binary...");
+    let sanity_status = Command::new(&temp_exe)
+        .arg("--help")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+
+    match sanity_status {
+        Ok(status) if status.success() => {}
+        _ => {
+            let _ = fs::remove_file(&temp_exe);
+            return Err(io::Error::new(io::ErrorKind::Other, "Downloaded binary failed basic sanity check --help"));
+        }
+    }
+
+    let backup_exe = current_exe.with_extension("bak");
+    println!("Backing up active binary to {}...", backup_exe.display());
+    if backup_exe.exists() {
+        fs::remove_file(&backup_exe)?;
+    }
+    fs::copy(&current_exe, &backup_exe)?;
+
+    println!("Installing upgraded binary...");
+    let old_exe = current_exe.with_extension("old");
+    if old_exe.exists() {
+        fs::remove_file(&old_exe)?;
+    }
+    
+    let _ = fs::rename(&current_exe, &old_exe);
+    if let Err(e) = fs::copy(&temp_exe, &current_exe) {
+        eprintln!("Failed to copy upgraded binary: {}", e);
+        println!("Restoring stable backup...");
+        let _ = fs::rename(&old_exe, &current_exe);
+        let _ = fs::remove_file(&backup_exe);
+        let _ = fs::remove_file(&temp_exe);
+        return Err(e);
+    }
+    let _ = fs::remove_file(&old_exe);
+    let _ = fs::remove_file(&temp_exe);
+
+    let daemon_was_running = is_daemon_running();
+    let old_pid = get_daemon_pid();
+
+    if daemon_was_running {
+        println!("Stopping currently running daemon (PID: {:?})...", old_pid);
+        let stop_status = Command::new(&backup_exe)
+            .arg("daemon")
+            .arg("--stop")
+            .status()?;
+        if !stop_status.success() {
+            eprintln!("Warning: Failed to cleanly stop old daemon process.");
+        }
+
+        println!("Starting upgraded daemon...");
+        let start_status = Command::new(&current_exe)
+            .arg("daemon")
+            .arg("--start")
+            .status()?;
+
+        if !start_status.success() {
+            println!("Launch failed, rolling back daemon...");
+            let _ = fs::remove_file(&current_exe);
+            let _ = fs::rename(&backup_exe, &current_exe);
+            let _ = Command::new(&current_exe).arg("daemon").arg("--start").status();
+            return Err(io::Error::new(io::ErrorKind::Other, "Failed to launch upgraded daemon, rolled back"));
+        }
+
+        println!("Waiting 3 seconds for health check...");
+        std::thread::sleep(std::time::Duration::from_secs(3));
+
+        if !is_daemon_running() {
+            println!("Launch crashed, rolling back daemon...");
+            let _ = fs::remove_file(&current_exe);
+            let _ = fs::rename(&backup_exe, &current_exe);
+            let _ = Command::new(&current_exe).arg("daemon").arg("--start").status();
+            return Err(io::Error::new(io::ErrorKind::Other, "Upgraded daemon crashed immediately, rolled back"));
+        }
+
+        println!("Upgraded daemon is healthy (PID: {:?}).", get_daemon_pid());
+    }
+
+    if backup_exe.exists() {
+        let _ = fs::remove_file(&backup_exe);
+    }
+
+    println!("Successfully upgraded to the new release!");
+    Ok(())
+}

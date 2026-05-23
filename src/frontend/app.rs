@@ -49,6 +49,7 @@ pub fn App() -> Element {
     let mut vault_notes = use_signal(Vec::new);
     let mut system_health = use_signal(Vec::new);
     let mut daemon_running = use_signal(|| false);
+    let mut upgrade_available = use_signal(|| None::<(String, String)>);
 
     // Poll data periodically
     let _fetch_future = use_future(move || async move {
@@ -71,6 +72,9 @@ pub fn App() -> Element {
             if let Ok(dr) = crate::get_daemon_status().await {
                 daemon_running.set(dr);
             }
+            if let Ok(upg) = crate::get_upgrade_status().await {
+                upgrade_available.set(upg);
+            }
             sleep_ms(3000).await;
         }
     });
@@ -86,6 +90,21 @@ pub fn App() -> Element {
                     span { class: "text-2xl", "🤖" }
                     h1 { class: "text-xl font-bold tracking-tight bg-gradient-to-r from-indigo-400 via-purple-400 to-indigo-300 bg-clip-text text-transparent",
                         "AGY Orchestrator Dashboard"
+                    }
+                    span { class: "text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded-md font-mono font-semibold",
+                        "v{env!(\"CARGO_PKG_VERSION\")}"
+                    }
+                    if let Some((tag_name, download_url)) = upgrade_available.read().clone() {
+                        button {
+                            class: "text-[10px] bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/20 px-2.5 py-0.5 rounded-full font-bold animate-pulse active:scale-95 transition-all shadow shadow-indigo-900/40 cursor-pointer",
+                            onclick: move |_| {
+                                let url = download_url.clone();
+                                async move {
+                                    let _ = crate::trigger_remote_upgrade(url).await;
+                                }
+                            },
+                            "Update to {tag_name} 🚀"
+                        }
                     }
                 }
                 div { class: "flex items-center gap-4",

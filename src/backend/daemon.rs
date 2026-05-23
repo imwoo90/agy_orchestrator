@@ -48,6 +48,26 @@ pub fn run_daemon_loop() -> io::Result<()> {
 
     loop {
         tick_count += 1;
+        
+        // Periodically check for new releases on GitHub (every 1 hour / 720 ticks, or on startup)
+        if tick_count == 1 || tick_count % 720 == 0 {
+            if let Ok(Some((tag_name, _download_url))) = super::upgrade::check_latest_release() {
+                let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
+                if let Ok(mut log_file) = fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&notifications_path)
+                {
+                    let _ = writeln!(
+                        log_file,
+                        "[{}] WARN: A new release '{}' is available on GitHub! Run 'self-upgrade --remote' to upgrade.",
+                        timestamp, tag_name
+                    );
+                }
+                println!("[Daemon] A new release '{}' is available on GitHub! Please run 'self-upgrade --remote'.", tag_name);
+            }
+        }
+
         let mut state = load_state();
         let mut state_changed = false;
 

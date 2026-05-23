@@ -90,6 +90,9 @@ pub enum Commands {
         /// Resolve a specific issue ID upon successful upgrade
         #[arg(long)]
         resolve_issue: Option<u32>,
+        /// Upgrade from the latest remote GitHub release instead of local compilation
+        #[arg(long)]
+        remote: bool,
     },
     /// Manage and register self-evolution issues
     Issue {
@@ -897,8 +900,25 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
                 println!("Please specify --start, --stop, or --status.");
             }
         }
-        Commands::SelfUpgrade { resolve_issue } => {
-            run_self_upgrade(resolve_issue)?;
+        Commands::SelfUpgrade { resolve_issue, remote } => {
+            if remote {
+                println!("Checking for latest release on GitHub...");
+                match super::upgrade::check_latest_release() {
+                    Ok(Some((tag, url))) => {
+                        println!("Found new version '{}'!", tag);
+                        super::upgrade::run_remote_upgrade(&url)?;
+                    }
+                    Ok(None) => {
+                        println!("You are already running the latest version.");
+                    }
+                    Err(e) => {
+                        eprintln!("Error checking latest release: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                run_self_upgrade(resolve_issue)?;
+            }
         }
         Commands::Issue { create, body, list, resolve } => {
             let mut issues = load_issues();
