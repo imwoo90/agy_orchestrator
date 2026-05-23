@@ -133,6 +133,13 @@ pub enum Commands {
         #[arg(long)]
         name: String,
     },
+    /// Search the project's historical logs (context_history.md) by keyword
+    SearchHistory {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        query: String,
+    },
 }
 
 pub enum CliResult {
@@ -983,6 +990,62 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
                 "Successfully compressed log file for '{}'. Size reduced from {} to {} bytes.",
                 name, initial_size, final_size
             );
+        }
+        Commands::SearchHistory { name, query } => {
+            let state = load_state();
+            let path_str = match state.get(&name) {
+                Some(info) => info.path.clone(),
+                None => {
+                    eprintln!("Error: Project '{}' not found.", name);
+                    std::process::exit(1);
+                }
+            };
+
+            let history_path = std::path::Path::new(&path_str).join("context_history.md");
+            if !history_path.exists() {
+                println!("No context_history.md (Cold Memory) file exists yet for project '{}'.", name);
+                return Ok(CliResult::Exit);
+            }
+
+            let content = fs::read_to_string(&history_path)?;
+            let query_lower = query.to_lowercase();
+            
+            let mut blocks = Vec::new();
+            let mut current_block = String::new();
+            
+            for line in content.lines() {
+                if line.trim().starts_with("# 📅 History log from") || line.trim().starts_with("# History log") {
+                    if !current_block.trim().is_empty() {
+                        blocks.push(current_block.clone());
+                    }
+                    current_block = line.to_string() + "\n";
+                } else {
+                    current_block.push_str(line);
+                    current_block.push('\n');
+                }
+            }
+            if !current_block.trim().is_empty() {
+                blocks.push(current_block);
+            }
+
+            let mut matched_blocks = Vec::new();
+            for block in blocks {
+                if block.to_lowercase().contains(&query_lower) {
+                    matched_blocks.push(block);
+                }
+            }
+
+            if matched_blocks.is_empty() {
+                println!("No historical logs matched the query: '{}'", query);
+            } else {
+                println!("Found {} matching historical log blocks (showing up to 3 latest matches):\n", matched_blocks.len());
+                let start_idx = matched_blocks.len().saturating_sub(3);
+                for (idx, block) in matched_blocks.iter().enumerate().skip(start_idx) {
+                    println!("--- Match {} ---", idx + 1);
+                    println!("{}", block.trim());
+                    println!("----------------\n");
+                }
+            }
         }
     }
 
