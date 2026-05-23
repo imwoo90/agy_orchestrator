@@ -128,6 +128,11 @@ pub enum Commands {
         #[arg(long)]
         content: String,
     },
+    /// Compress the active execution log file for token optimization
+    Compress {
+        #[arg(long)]
+        name: String,
+    },
 }
 
 pub enum CliResult {
@@ -963,6 +968,22 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
 
             println!("Successfully learned and registered skill: '{}' at {}", sanitized_name, file_path.display());
         }
+        Commands::Compress { name } => {
+            let log_file_path = base_dir.join("logs").join(format!("{}.log", name));
+            if !log_file_path.exists() {
+                eprintln!("Error: Log file for project '{}' not found.", name);
+                std::process::exit(1);
+            }
+
+            let initial_size = fs::metadata(&log_file_path)?.len();
+            compress_log_file(&log_file_path)?;
+            let final_size = fs::metadata(&log_file_path)?.len();
+
+            println!(
+                "Successfully compressed log file for '{}'. Size reduced from {} to {} bytes.",
+                name, initial_size, final_size
+            );
+        }
     }
 
     Ok(CliResult::Exit)
@@ -970,4 +991,88 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
 
 fn text_decorations_helper() {
     println!("--------------------------------------------------");
+}
+
+pub fn compress_log_file(log_path: &std::path::Path) -> io::Result<()> {
+    if !log_path.exists() {
+        return Ok(());
+    }
+    
+    let content = fs::read_to_string(log_path)?;
+    let lines: Vec<&str> = content.lines().collect();
+    
+    if lines.len() < 300 {
+        return Ok(());
+    }
+
+    let mut compressed_lines = Vec::new();
+    let mut i = 0;
+    let mut in_long_block = false;
+    let mut block_lines = Vec::new();
+    
+    while i < lines.len() {
+        let line = lines[i];
+        let trimmed = line.trim();
+        
+        if trimmed.starts_with("Compiling ") || trimmed.starts_with("Checking ") || trimmed.contains("Downloading ") {
+            let mut skip_count = 0;
+            while i + skip_count < lines.len() {
+                let next_line = lines[i + skip_count].trim();
+                if next_line.starts_with("Compiling ") || next_line.starts_with("Checking ") || next_line.contains("Downloading ") {
+                    skip_count += 1;
+                } else {
+                    break;
+                }
+            }
+            if skip_count > 3 {
+                compressed_lines.push("[... Rust cargo dependency checking/compiling logs compressed ...]");
+                i += skip_count - 1;
+            } else {
+                compressed_lines.push(line);
+            }
+            i += 1;
+            continue;
+        }
+
+        if trimmed.starts_with("[diff_block_start]") || (trimmed.contains("Showing lines ") && trimmed.contains(" of ")) {
+            in_long_block = true;
+            block_lines.clear();
+            block_lines.push(line);
+            i += 1;
+            continue;
+        }
+
+        if in_long_block {
+            block_lines.push(line);
+            if trimmed.starts_with("[diff_block_end]") || trimmed.contains("The above content shows the entire") || trimmed.contains("The above content does NOT show") {
+                in_long_block = false;
+                if block_lines.len() > 60 {
+                    for j in 0..15 {
+                        compressed_lines.push(block_lines[j]);
+                    }
+                    compressed_lines.push("[... (Tool output content truncated and compressed to optimize token usages) ...]");
+                    let len = block_lines.len();
+                    for j in (len - 15)..len {
+                        compressed_lines.push(block_lines[j]);
+                    }
+                } else {
+                    for bl in &block_lines {
+                        compressed_lines.push(*bl);
+                    }
+                }
+            }
+            i += 1;
+            continue;
+        }
+
+        compressed_lines.push(line);
+        i += 1;
+    }
+
+    let mut file = File::create(log_path)?;
+    for cl in compressed_lines {
+        writeln!(file, "{}", cl)?;
+    }
+    
+    Ok(())
 }

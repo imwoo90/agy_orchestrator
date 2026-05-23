@@ -188,6 +188,36 @@ pub fn run_daemon_loop() -> io::Result<()> {
                             }
                         }
                     }
+                } else {
+                    // Check log size and auto-compress if running PID is alive
+                    let log_file_path = base_dir.join("logs").join(format!("{}.log", name));
+                    if log_file_path.exists() {
+                        if let Ok(metadata) = fs::metadata(&log_file_path) {
+                            let file_size = metadata.len();
+                            // 100KB threshold
+                            if file_size > 100 * 1024 {
+                                println!("[Daemon] Log file for running project '{}' is too large ({} bytes). Triggering auto-compression...", name, file_size);
+                                let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
+                                if let Ok(mut log_file) = fs::OpenOptions::new()
+                                    .create(true)
+                                    .append(true)
+                                    .open(&notifications_path)
+                                {
+                                    let _ = writeln!(
+                                        log_file,
+                                        "[{}] INFO: Auto-compressing large log file for running project '{}' (Size: {} bytes).",
+                                        timestamp, name, file_size
+                                    );
+                                }
+                                
+                                if let Err(e) = crate::backend::cli::compress_log_file(&log_file_path) {
+                                    eprintln!("[Daemon] Failed to auto-compress log for '{}': {}", name, e);
+                                } else if let Ok(new_metadata) = fs::metadata(&log_file_path) {
+                                    println!("[Daemon] Auto-compression completed for '{}'. New size: {} bytes.", name, new_metadata.len());
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
