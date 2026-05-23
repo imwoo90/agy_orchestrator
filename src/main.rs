@@ -139,6 +139,8 @@ enum Commands {
         #[arg(long, default_value_t = 8080)]
         port: u16,
     },
+    /// Run a proactive health check on all registered targets
+    HealthCheck,
 }
 
 fn get_base_dir() -> PathBuf {
@@ -294,7 +296,10 @@ fn run_daemon_loop() -> io::Result<()> {
 
     println!("Orchestrator daemon started in foreground. Monitoring projects...");
 
+    let mut tick_count: u64 = 0;
+
     loop {
+        tick_count += 1;
         let mut state = load_state();
         let mut state_changed = false;
 
@@ -560,6 +565,25 @@ fn run_daemon_loop() -> io::Result<()> {
             save_state(&state)?;
         }
 
+        // Run proactive health checks every 12 ticks (~60 seconds)
+        if tick_count % 12 == 0 {
+            println!("[Daemon] Running periodic health checks (tick #{})...", tick_count);
+            match run_health_checks() {
+                Ok(results) => {
+                    let healthy_count = results.iter().filter(|r| r.healthy).count();
+                    let failed_count = results.len() - healthy_count;
+                    if failed_count > 0 {
+                        println!("[Daemon] Health check completed: {} passed, {} FAILED.", healthy_count, failed_count);
+                    } else {
+                        println!("[Daemon] Health check completed: all {} targets healthy.", healthy_count);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[Daemon] Health check error: {}", e);
+                }
+            }
+        }
+
         std::thread::sleep(std::time::Duration::from_secs(5));
     }
 }
@@ -573,6 +597,160 @@ fn find_workspace_root() -> io::Result<PathBuf> {
     }
     Err(io::Error::new(io::ErrorKind::NotFound, "Workspace Cargo.toml not found"))
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct HealthCheckResult {
+    target: String,
+    healthy: bool,
+    message: String,
+    checked_at: String,
+}
+
+
+fn save_health_results(results: &[HealthCheckResult]) -> io::Result<()> {
+    let path = get_base_dir().join("health.json");
+    let file = File::create(path)?;
+    serde_json::to_writer_pretty(file, results)?;
+    Ok(())
+}
+
+fn run_health_checks() -> io::Result<Vec<HealthCheckResult>> {
+    let base_dir = get_base_dir();
+    let notifications_path = base_dir.join("notifications.log");
+    let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let mut results: Vec<HealthCheckResult> = Vec::new();
+
+    // 1. Orchestrator self-check
+    if let Ok(workspace_root) = find_workspace_root() {
+        let check_status = Command::new("cargo")
+            .arg("check")
+            .current_dir(&workspace_root)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+
+        let (healthy, msg) = match check_status {
+            Ok(s) if s.success() => (true, "cargo check passed".to_string()),
+            Ok(s) => (false, format!("cargo check failed (exit code: {:?})", s.code())),
+            Err(e) => (false, format!("cargo check error: {}", e)),
+        };
+
+        results.push(HealthCheckResult {
+            target: "orchestrator".to_string(),
+            healthy,
+            message: msg.clone(),
+            checked_at: timestamp.clone(),
+        });
+
+        if let Ok(mut log_file) = fs::OpenOptions::new().create(true).append(true).open(&notifications_path) {
+            if healthy {
+                let _ = writeln!(log_file, "[{}] INFO: Health check PASSED for orchestrator.", timestamp);
+            } else {
+                let _ = writeln!(log_file, "[{}] ERROR: Health check FAILED for orchestrator: {}", timestamp, msg);
+            }
+        }
+
+        // Auto-register issue if orchestrator health check fails
+        if !healthy {
+            let mut issues = load_issues();
+            let already_exists = issues.iter().any(|i| {
+                i.title.starts_with("[Auto-Health] orchestrator") && (i.status == "open" || i.status == "in-progress")
+            });
+            if !already_exists {
+                let next_id = issues.iter().map(|i| i.id).max().unwrap_or(0) + 1;
+                issues.push(Issue {
+                    id: next_id,
+                    title: "[Auto-Health] orchestrator build failure".to_string(),
+                    body: format!("Automated health check detected build failure in the orchestrator codebase.\nError: {}\nPlease investigate and fix the compilation errors.", msg),
+                    status: "open".to_string(),
+                    created_at: Local::now().to_rfc3339(),
+                    resolved_at: None,
+                });
+                let _ = save_issues(&issues);
+                if let Ok(mut log_file) = fs::OpenOptions::new().create(true).append(true).open(&notifications_path) {
+                    let _ = writeln!(log_file, "[{}] INFO: Auto-registered health issue for orchestrator.", timestamp);
+                }
+            }
+        }
+    }
+
+    // 2. Check registered projects
+    let state = load_state();
+    for (name, info) in state.iter() {
+        let project_path = Path::new(&info.path);
+        let (healthy, msg) = if project_path.join("Cargo.toml").exists() {
+            let check_status = Command::new("cargo")
+                .arg("check")
+                .current_dir(project_path)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            match check_status {
+                Ok(s) if s.success() => (true, "cargo check passed".to_string()),
+                Ok(s) => (false, format!("cargo check failed (exit code: {:?})", s.code())),
+                Err(e) => (false, format!("cargo check error: {}", e)),
+            }
+        } else if project_path.join("package.json").exists() {
+            let check_status = Command::new("npm")
+                .arg("test")
+                .arg("--if-present")
+                .current_dir(project_path)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            match check_status {
+                Ok(s) if s.success() => (true, "npm test passed".to_string()),
+                Ok(s) => (false, format!("npm test failed (exit code: {:?})", s.code())),
+                Err(e) => (false, format!("npm test error: {}", e)),
+            }
+        } else {
+            (true, "no build system detected (skipped)".to_string())
+        };
+
+        results.push(HealthCheckResult {
+            target: name.clone(),
+            healthy,
+            message: msg.clone(),
+            checked_at: timestamp.clone(),
+        });
+
+        if let Ok(mut log_file) = fs::OpenOptions::new().create(true).append(true).open(&notifications_path) {
+            if healthy {
+                let _ = writeln!(log_file, "[{}] INFO: Health check PASSED for project '{}'.", timestamp, name);
+            } else {
+                let _ = writeln!(log_file, "[{}] ERROR: Health check FAILED for project '{}': {}", timestamp, name, msg);
+            }
+        }
+
+        // Auto-register issue if project health check fails
+        if !healthy {
+            let mut issues = load_issues();
+            let prefix = format!("[Auto-Health] {}", name);
+            let already_exists = issues.iter().any(|i| {
+                i.title.starts_with(&prefix) && (i.status == "open" || i.status == "in-progress")
+            });
+            if !already_exists {
+                let next_id = issues.iter().map(|i| i.id).max().unwrap_or(0) + 1;
+                issues.push(Issue {
+                    id: next_id,
+                    title: format!("[Auto-Health] {} build failure", name),
+                    body: format!("Automated health check detected build failure in project '{}'.\nPath: {}\nError: {}\nPlease investigate and fix the issue.", name, info.path, msg),
+                    status: "open".to_string(),
+                    created_at: Local::now().to_rfc3339(),
+                    resolved_at: None,
+                });
+                let _ = save_issues(&issues);
+                if let Ok(mut log_file) = fs::OpenOptions::new().create(true).append(true).open(&notifications_path) {
+                    let _ = writeln!(log_file, "[{}] INFO: Auto-registered health issue for project '{}'.", timestamp, name);
+                }
+            }
+        }
+    }
+
+    let _ = save_health_results(&results);
+    Ok(results)
+}
+
 
 fn rollback_upgrade(current_exe: &Path, backup_exe: &Path, restart_daemon: bool, reason: &str) -> io::Result<()> {
     eprintln!("CRITICAL ERROR: {}. Initiating rollback...", reason);
@@ -945,6 +1123,10 @@ fn handle_connection(mut stream: std::net::TcpStream) -> io::Result<()> {
         } else {
             send_response(&mut stream, 400, "Bad Request", "text/plain", b"Invalid topic")?;
         }
+    } else if method == "GET" && path == "/api/health" {
+        let health_path = get_base_dir().join("health.json");
+        let data = fs::read(health_path).unwrap_or_else(|_| b"[]".to_vec());
+        send_response(&mut stream, 200, "OK", "application/json", &data)?;
     } else {
         send_response(&mut stream, 404, "Not Found", "text/plain", b"Not Found")?;
     }
@@ -1383,6 +1565,26 @@ fn main() -> io::Result<()> {
         }
         Commands::Dashboard { port } => {
             run_web_server(port)?;
+        }
+        Commands::HealthCheck => {
+            println!("Running health checks on all registered targets...\n");
+            match run_health_checks() {
+                Ok(results) => {
+                    println!("{:<25} | {:<8} | {:<20} | {}", "Target", "Status", "Checked At", "Message");
+                    println!("{}", "-".repeat(90));
+                    for r in &results {
+                        let status = if r.healthy { "✅ OK" } else { "❌ FAIL" };
+                        println!("{:<25} | {:<8} | {:<20} | {}", r.target, status, r.checked_at, r.message);
+                    }
+                    let healthy_count = results.iter().filter(|r| r.healthy).count();
+                    let failed_count = results.len() - healthy_count;
+                    println!("\nSummary: {} passed, {} failed.", healthy_count, failed_count);
+                }
+                Err(e) => {
+                    eprintln!("Health check error: {}", e);
+                    std::process::exit(1);
+                }
+            }
         }
     }
 

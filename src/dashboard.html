@@ -510,6 +510,10 @@
             <span class="status-dot"></span>
             <span>Daemon: Active</span>
         </div>
+        <div class="status-indicator" id="health-indicator" style="margin-left: 12px;">
+            <span style="font-size: 14px;">🔄</span>
+            <span id="health-label">Health: Checking...</span>
+        </div>
     </header>
 
     <div class="dashboard-container">
@@ -529,13 +533,14 @@
                                 <th>Project Name</th>
                                 <th>PID</th>
                                 <th>Status</th>
+                                <th>Health</th>
                                 <th>Spawned At</th>
                                 <th>Workspace Location</th>
                             </tr>
                         </thead>
                         <tbody id="projects-list">
                             <tr>
-                                <td colspan="5" style="text-align: center; color: var(--text-muted);">Loading projects...</td>
+                                <td colspan="6" style="text-align: center; color: var(--text-muted);">Loading projects...</td>
                             </tr>
                         </tbody>
                     </table>
@@ -666,7 +671,7 @@
                 
                 const keys = Object.keys(projects);
                 if (keys.length === 0) {
-                    tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted);">No background tasks registered.</td></tr>`;
+                    tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No background tasks registered.</td></tr>`;
                     return;
                 }
 
@@ -674,11 +679,18 @@
                     const info = projects[name];
                     const badgeClass = `badge badge-${info.status}`;
                     const time = info.spawned_at.replace('T', ' ').substring(0, 19);
+                    const healthInfo = healthMap[name];
+                    const healthBadge = healthInfo
+                        ? (healthInfo.healthy
+                            ? '<span class="badge badge-completed">✅ OK</span>'
+                            : '<span class="badge badge-failed">❌ FAIL</span>')
+                        : '<span style="color: var(--text-muted); font-size: 12px;">—</span>';
                     return `
                         <tr>
                             <td style="font-weight: 500; color: #60a5fa;">${name}</td>
                             <td style="font-family: 'JetBrains Mono', monospace; font-size: 13px;">${info.pid}</td>
                             <td><span class="${badgeClass}">${info.status}</span></td>
+                            <td>${healthBadge}</td>
                             <td style="color: var(--text-muted); font-size: 13px;">${time}</td>
                             <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-muted);">${info.path}</td>
                         </tr>
@@ -863,16 +875,48 @@
             }
         }
 
+        // Health monitoring
+        let healthMap = {};
+        async function fetchHealth() {
+            try {
+                const res = await fetch('/api/health');
+                const results = await res.json();
+                const indicator = document.getElementById('health-indicator');
+                const label = document.getElementById('health-label');
+
+                healthMap = {};
+                results.forEach(r => { healthMap[r.target] = r; });
+
+                const failedCount = results.filter(r => !r.healthy).length;
+                if (results.length === 0) {
+                    label.innerText = 'Health: No data';
+                    indicator.querySelector('span:first-child').innerText = '🔄';
+                } else if (failedCount > 0) {
+                    label.innerText = `Health: ${failedCount} issue(s)`;
+                    indicator.querySelector('span:first-child').innerText = '🔴';
+                    indicator.style.borderColor = 'rgba(239, 68, 68, 0.4)';
+                } else {
+                    label.innerText = 'Health: All OK';
+                    indicator.querySelector('span:first-child').innerText = '🟢';
+                    indicator.style.borderColor = 'rgba(16, 185, 129, 0.3)';
+                }
+            } catch (err) {
+                console.error("Failed to fetch health:", err);
+            }
+        }
+
         // Setup Polling Loops
         fetchProjects();
         fetchIssues();
         fetchLogs();
         fetchVaultNotes();
+        fetchHealth();
 
         setInterval(() => {
             fetchProjects();
             fetchIssues();
             fetchLogs();
+            fetchHealth();
         }, 2000);
     </script>
 </body>

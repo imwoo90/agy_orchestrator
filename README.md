@@ -52,10 +52,12 @@ Welcome! This workspace acts as a central **Control Tower (Orchestrator)** to ma
      - `--resolve <id>`: Manually resolves an issue by ID.
   - **`dashboard`**: Starts the embedded zero-dependency web dashboard.
     - `--port <port>`: Port to bind the server to (default is 8080).
+  - **`health-check`**: Runs an on-demand proactive health check on the orchestrator and all registered projects. Reports build status and auto-registers issues for failures.
 - **`~/.agy_orchestrator/projects.json`**: State registry keeping track of active and historical runs.
 - **`~/.agy_orchestrator/issues.json`**: Local issue database storing self-evolution issues.
+- **`~/.agy_orchestrator/health.json`**: Latest health check results for all monitored targets (auto-updated by the daemon every ~60s).
 - **`~/.agy_orchestrator/memory/system_instructions.md`**: Fixed operating manual (force-updated by the binary).
 - **`~/.agy_orchestrator/memory/vault/`**: Obsidian-style Personal Knowledge Vault folder containing user habits.
-- **`~/.agy_orchestrator/notifications.log`**: Running log of daemon notification updates (completions, failures).
+- **`~/.agy_orchestrator/notifications.log`**: Running log of daemon notification updates (completions, failures, health checks).
 - **`~/.agy_orchestrator/daemon.log`**: Redirected stdout/stderr daemon execution output log.
 
