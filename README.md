@@ -7,6 +7,25 @@
 
 ---
 
+## ⚙️ Installation & Quick Start
+
+To install or upgrade **AGY Orchestrator** instantly on Linux x86_64, run the following one-liner in your terminal:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/imwoo90/agy_orchestrator/main/install.sh | bash
+```
+
+### For Developers (Compile from Source)
+If you want to compile and modify the orchestrator locally:
+```bash
+git clone https://github.com/imwoo90/agy_orchestrator.git
+cd agy_orchestrator
+cargo install --path .
+```
+For AI agents performing code modifications, please strictly refer to **[AGENTS.md](file:///home/wimvm/works/agy_orchestrator/AGENTS.md)**.
+
+---
+
 ## 🚀 Key Features
 
 * **Sub-Agent Delegation**: Spawn sandboxed sub-agents with custom objectives and hot-swap context.
@@ -39,6 +58,6 @@ Run `agy-orchestrator <command> [options]` to manage your agent workspaces.
 * **`src/backend/`**: Rust core daemon, CLI logic, and OTA/evolution upgrade engine.
 * **`src/frontend/`**: Dioxus 0.7.9 fullstack web dashboard.
 * **`AGENTS.md`**: Protocol guidelines and harness checkpoints for AI agents.
-* **`INSTALL.md`**: Guide for human users to download, install, compile, and update the application.
+* **`install.sh`**: Automated one-click installation script.
 
 
