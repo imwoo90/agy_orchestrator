@@ -152,6 +152,12 @@ pub enum Commands {
         #[arg(long)]
         goal: String,
     },
+    /// Run safety checks (Clippy, test) for self-evolution and auto-rollback on failure
+    EvolutionHarness {
+        /// The specific issue ID to validate
+        #[arg(long)]
+        issue_id: u32,
+    },
 }
 
 pub enum CliResult {
@@ -1300,6 +1306,9 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
                     std::process::exit(1);
                 }
             }
+        }
+        Commands::EvolutionHarness { issue_id } => {
+            super::upgrade::run_evolution_harness(issue_id)?;
         }
     }
 

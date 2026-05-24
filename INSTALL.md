@@ -36,6 +36,9 @@ Best for general users who do not need code compilation or self-evolution featur
 ### Option B: Compile from Source (Developer/Self-Evolution Mode)
 Best for maintainers who want to test local modifications and run self-evolution upgrades.
 
+> [!NOTE]
+> For AI agents operating in Developer Mode, please strictly follow the development protocols and checkout gates detailed in **[AGENTS.md](file:///home/wimvm/works/agy_orchestrator/AGENTS.md)**.
+
 #### Additional Requirements
 - **Rust toolchain** (v1.75+ recommended): Install via [rustup.rs](https://rustup.rs/)
 - **Dioxus CLI** (for fullstack web server builds):

@@ -376,3 +376,86 @@ pub fn run_remote_upgrade(download_url: &str) -> io::Result<()> {
     println!("Successfully upgraded to the new release!");
     Ok(())
 }
+
+pub fn run_evolution_harness(issue_id: u32) -> io::Result<()> {
+    let workspace_root = match find_workspace_root() {
+        Ok(root) => root,
+        Err(e) => {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("Evolution harness is only available in a git workspace: {}", e)
+            ));
+        }
+    };
+    println!("Evolution Harness: Working directory: {}", workspace_root.display());
+
+    let rollback_and_fail = |reason: &str| -> io::Result<()> {
+        eprintln!("HARNESS FAILURE: {}. Initiating rollback...", reason);
+        let mut issues = load_issues();
+        if let Some(issue) = issues.iter_mut().find(|i| i.id == issue_id) {
+            issue.status = "failed".to_string();
+            let _ = save_issues(&issues);
+        }
+        let _ = Command::new("git").arg("reset").arg("--hard").arg("HEAD").current_dir(&workspace_root).status();
+        let _ = Command::new("git").arg("clean").arg("-fd").current_dir(&workspace_root).status();
+        Err(io::Error::new(io::ErrorKind::Other, format!("Evolution Harness rejected changes: {}", reason)))
+    };
+
+    // 1. Run cargo clippy (Lint Gate)
+    println!("Harness Step 1: Running cargo clippy --all-targets -- -D warnings...");
+    let clippy_status = Command::new("cargo")
+        .arg("clippy")
+        .arg("--all-targets")
+        .arg("--")
+        .arg("-D")
+        .arg("warnings")
+        .current_dir(&workspace_root)
+        .status()?;
+
+    if !clippy_status.success() {
+        return rollback_and_fail("Clippy warnings or compiler issues detected");
+    }
+    println!("Clippy checks passed successfully!");
+
+    // 2. Run cargo test (Test Gate)
+    println!("Harness Step 2: Running cargo test...");
+    let test_status = Command::new("cargo")
+        .arg("test")
+        .current_dir(&workspace_root)
+        .status()?;
+
+    if !test_status.success() {
+        return rollback_and_fail("Unit tests failed");
+    }
+    println!("All unit tests passed successfully!");
+
+    // 3. Promote & Push changes to Remote (Success Gate)
+    let mut issues = load_issues();
+    if let Some(issue) = issues.iter_mut().find(|i| i.id == issue_id) {
+        let issue_title = issue.title.clone();
+        issue.status = "resolved".to_string();
+        issue.resolved_at = Some(Local::now().to_rfc3339());
+        save_issues(&issues)?;
+
+        println!("Harness Step 3: Staging and committing changes to Git...");
+        let _ = Command::new("git").arg("add").arg(".").current_dir(&workspace_root).status();
+        let commit_msg = format!("Auto-evolution: Resolves Issue #{}: {}", issue_id, issue_title);
+        let _ = Command::new("git").arg("commit").arg("-m").arg(&commit_msg).current_dir(&workspace_root).status();
+
+        if let Ok(output) = Command::new("git").arg("remote").current_dir(&workspace_root).output() {
+            let remote_str = String::from_utf8_lossy(&output.stdout);
+            if !remote_str.trim().is_empty() {
+                println!("Pushing changes to remote...");
+                let _ = Command::new("git").arg("push").current_dir(&workspace_root).status();
+            }
+        }
+        println!("Successfully pushed changes and marked issue #{} as resolved!", issue_id);
+    } else {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Issue #{} not found in issues.json", issue_id)
+        ));
+    }
+
+    Ok(())
+}
