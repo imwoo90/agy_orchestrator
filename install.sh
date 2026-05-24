@@ -17,16 +17,19 @@ if [ "$OS_TYPE" != "Linux" ] || [ "$ARCH_TYPE" != "x86_64" ]; then
     exit 1
 fi
 
-# 2. Retrieve latest release URL from GitHub API (independent of jq)
-echo "🔍 Fetching latest release metadata from GitHub..."
-API_URL="https://api.github.com/repos/imwoo90/agy_orchestrator/releases/latest"
-DOWNLOAD_URL=$(curl -s "$API_URL" | grep -o '"browser_download_url": *"[^"]*"' | grep "agy-orchestrator-linux.tar.gz" | cut -d '"' -f 4 || true)
+# 2. Retrieve latest release URL from GitHub redirects (independent of GitHub API)
+echo "🔍 Fetching latest release tag from GitHub..."
+REDIRECT_URL=$(curl -sI https://github.com/imwoo90/agy_orchestrator/releases/latest | grep -i "location:" || true)
+TAG_NAME=$(echo "$REDIRECT_URL" | grep -o "tag/[^[:space:]]*" | cut -d'/' -f2 | tr -d '\r\n' || true)
 
-if [ -z "$DOWNLOAD_URL" ]; then
-    echo "❌ Error: Could not resolve binary download URL from GitHub Releases."
+if [ -z "$TAG_NAME" ]; then
+    echo "❌ Error: Could not resolve latest release tag from GitHub redirects."
     echo "Please check your internet connection or verify the repository Releases page."
     exit 1
 fi
+
+echo "🏷️ Latest release tag is: $TAG_NAME"
+DOWNLOAD_URL="https://github.com/imwoo90/agy_orchestrator/releases/download/$TAG_NAME/agy-orchestrator-linux.tar.gz"
 
 # 3. Create install directories
 INSTALL_DIR="$HOME/.local/bin"

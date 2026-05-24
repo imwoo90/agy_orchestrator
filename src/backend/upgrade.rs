@@ -245,21 +245,32 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
 
 pub fn check_latest_release() -> io::Result<Option<(String, String)>> {
     let output = Command::new("curl")
-        .arg("-s")
-        .arg("-H")
-        .arg("User-Agent: agy-orchestrator")
-        .arg("https://api.github.com/repos/imwoo90/agy_orchestrator/releases/latest")
+        .arg("-sI")
+        .arg("https://github.com/imwoo90/agy_orchestrator/releases/latest")
         .output()?;
 
     if !output.status.success() {
-        return Err(io::Error::other("Failed to call GitHub API via curl"));
+        return Err(io::Error::other("Failed to check latest release via curl"));
     }
 
-    let val: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Failed to parse JSON: {}", e)))?;
+    let headers = String::from_utf8_lossy(&output.stdout);
+    let mut tag_name = None;
 
-    let tag_name = match val.get("tag_name").and_then(|t| t.as_str()) {
-        Some(t) => t.to_string(),
+    for line in headers.lines() {
+        let line_trimmed = line.trim();
+        if line_trimmed.to_lowercase().starts_with("location:") {
+            if let Some(pos) = line_trimmed.find("/tag/") {
+                let tag = line_trimmed[pos + 5..].trim().to_string();
+                if !tag.is_empty() {
+                    tag_name = Some(tag);
+                    break;
+                }
+            }
+        }
+    }
+
+    let tag_name = match tag_name {
+        Some(t) => t,
         None => return Ok(None),
     };
 
@@ -268,20 +279,12 @@ pub fn check_latest_release() -> io::Result<Option<(String, String)>> {
         return Ok(None);
     }
 
-    // Find binary package asset
-    if let Some(assets) = val.get("assets").and_then(|a| a.as_array()) {
-        for asset in assets {
-            if let Some(name) = asset.get("name").and_then(|n| n.as_str()) {
-                if name == "agy-orchestrator-linux.tar.gz" {
-                    if let Some(url) = asset.get("browser_download_url").and_then(|u| u.as_str()) {
-                        return Ok(Some((tag_name, url.to_string())));
-                    }
-                }
-            }
-        }
-    }
+    let url = format!(
+        "https://github.com/imwoo90/agy_orchestrator/releases/download/{}/agy-orchestrator-linux.tar.gz",
+        tag_name
+    );
 
-    Ok(None)
+    Ok(Some((tag_name, url)))
 }
 
 pub fn run_remote_upgrade(download_url: &str) -> io::Result<()> {

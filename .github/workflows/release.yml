@@ -44,20 +44,30 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "Version is v$VERSION"
 
-      - name: Manage Tag and Push
+      - name: Check if Tag Exists
+        id: check_tag
         run: |
           TAG_NAME="v${{ steps.get_version.outputs.VERSION }}"
-          if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
-            echo "Tag $TAG_NAME already exists."
+          if git ls-remote --tags origin | grep -q "refs/tags/$TAG_NAME$"; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Tag $TAG_NAME already exists on origin."
           else
-            echo "Creating tag $TAG_NAME"
-            git config --global user.name "github-actions[bot]"
-            git config --global user.email "github-actions[bot]@users.noreply.github.com"
-            git tag "$TAG_NAME"
-            git push origin "$TAG_NAME"
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Tag $TAG_NAME does not exist on origin."
           fi
 
+      - name: Manage Tag and Push
+        if: steps.check_tag.outputs.exists != 'true'
+        run: |
+          TAG_NAME="v${{ steps.get_version.outputs.VERSION }}"
+          echo "Creating tag $TAG_NAME"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG_NAME"
+          git push origin "$TAG_NAME"
+
       - name: Prepare Release Assets
+        if: steps.check_tag.outputs.exists != 'true'
         run: |
           # Copy to a predictable name for the release uploader
           cp target/dx/agy-orchestrator/release/web/server ./agy-orchestrator
@@ -65,6 +75,7 @@ jobs:
           tar -czf agy-orchestrator-linux.tar.gz agy-orchestrator public
 
       - name: GitHub Release
+        if: steps.check_tag.outputs.exists != 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.get_version.outputs.VERSION }}
