@@ -15,6 +15,12 @@ To install or upgrade **AGY Orchestrator** instantly on Linux x86_64, run the fo
 curl -fsSL https://raw.githubusercontent.com/imwoo90/agy_orchestrator/main/install.sh | bash
 ```
 
+To perform a clean uninstallation (deletes all configurations, databases, and logs), run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/imwoo90/agy_orchestrator/main/uninstall.sh | bash
+```
+
 ### For Developers (Compile from Source)
 If you want to compile and modify the orchestrator locally:
 ```bash
@@ -59,5 +65,6 @@ Run `agy-orchestrator <command> [options]` to manage your agent workspaces.
 * **`src/frontend/`**: Dioxus 0.7.9 fullstack web dashboard.
 * **`AGENTS.md`**: Protocol guidelines and harness checkpoints for AI agents.
 * **`install.sh`**: Automated one-click installation script.
+* **`uninstall.sh`**: Automated one-click clean uninstallation script.
 
 
