@@ -20,7 +20,7 @@ fi
 # 2. Retrieve latest release URL from GitHub API (independent of jq)
 echo "🔍 Fetching latest release metadata from GitHub..."
 API_URL="https://api.github.com/repos/imwoo90/agy_orchestrator/releases/latest"
-DOWNLOAD_URL=$(curl -s "$API_URL" | grep -o '"browser_download_url": *"[^"]*"' | grep "agy-orchestrator" | cut -d '"' -f 4 || true)
+DOWNLOAD_URL=$(curl -s "$API_URL" | grep -o '"browser_download_url": *"[^"]*"' | grep "agy-orchestrator-linux.tar.gz" | cut -d '"' -f 4 || true)
 
 if [ -z "$DOWNLOAD_URL" ]; then
     echo "❌ Error: Could not resolve binary download URL from GitHub Releases."
@@ -33,9 +33,12 @@ INSTALL_DIR="$HOME/.local/bin"
 echo "📁 Creating binary installation directory: $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 
-# 4. Download pre-compiled binary
-echo "📥 Downloading binary asset..."
-curl -L -o "$INSTALL_DIR/agy-orchestrator" "$DOWNLOAD_URL"
+# 4. Download and extract pre-compiled binary package
+echo "📥 Downloading binary package..."
+curl -L -o "$INSTALL_DIR/agy-orchestrator-linux.tar.gz" "$DOWNLOAD_URL"
+echo "📦 Extracting package..."
+tar -xzf "$INSTALL_DIR/agy-orchestrator-linux.tar.gz" -C "$INSTALL_DIR"
+rm -f "$INSTALL_DIR/agy-orchestrator-linux.tar.gz"
 chmod +x "$INSTALL_DIR/agy-orchestrator"
 
 # 5. Bootstrap config directories

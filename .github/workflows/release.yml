@@ -61,6 +61,8 @@ jobs:
         run: |
           # Copy to a predictable name for the release uploader
           cp target/dx/agy-orchestrator/release/web/server ./agy-orchestrator
+          cp -r target/dx/agy-orchestrator/release/web/public ./public
+          tar -czf agy-orchestrator-linux.tar.gz agy-orchestrator public
 
       - name: GitHub Release
         uses: softprops/action-gh-release@v2
@@ -68,7 +70,7 @@ jobs:
           tag_name: v${{ steps.get_version.outputs.VERSION }}
           name: Release v${{ steps.get_version.outputs.VERSION }}
           files: |
-            ./agy-orchestrator
+            ./agy-orchestrator-linux.tar.gz
           draft: false
           prerelease: false
         env:

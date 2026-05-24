@@ -32,11 +32,16 @@ if pgrep -f "agy-orchestrator daemon" > /dev/null 2>&1; then
     pkill -f "agy-orchestrator daemon" || true
 fi
 
-# 3. Remove compiled/installed binary
+# 3. Remove compiled/installed binary and assets
 INSTALL_BIN="$HOME/.local/bin/agy-orchestrator"
 if [ -f "$INSTALL_BIN" ]; then
     echo "🗑️ Removing binary: $INSTALL_BIN"
     rm -f "$INSTALL_BIN"
+fi
+INSTALL_PUBLIC="$HOME/.local/bin/public"
+if [ -d "$INSTALL_PUBLIC" ]; then
+    echo "🗑️ Removing assets directory: $INSTALL_PUBLIC"
+    rm -rf "$INSTALL_PUBLIC"
 fi
 
 # 4. Remove all configurations, memories, and logs

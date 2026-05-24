@@ -268,11 +268,11 @@ pub fn check_latest_release() -> io::Result<Option<(String, String)>> {
         return Ok(None);
     }
 
-    // Find binary asset
+    // Find binary package asset
     if let Some(assets) = val.get("assets").and_then(|a| a.as_array()) {
         for asset in assets {
             if let Some(name) = asset.get("name").and_then(|n| n.as_str()) {
-                if name == "agy-orchestrator" {
+                if name == "agy-orchestrator-linux.tar.gz" {
                     if let Some(url) = asset.get("browser_download_url").and_then(|u| u.as_str()) {
                         return Ok(Some((tag_name, url.to_string())));
                     }
@@ -287,18 +287,48 @@ pub fn check_latest_release() -> io::Result<Option<(String, String)>> {
 pub fn run_remote_upgrade(download_url: &str) -> io::Result<()> {
     let current_exe = std::env::current_exe()?;
     let parent_dir = current_exe.parent().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Parent directory of current exe not found"))?;
-    let temp_exe = parent_dir.join("agy-orchestrator-new");
+    
+    let temp_tar = parent_dir.join("agy-orchestrator-new.tar.gz");
 
-    println!("Downloading new binary from {}...", download_url);
+    println!("Downloading new package from {}...", download_url);
     let download_status = Command::new("curl")
         .arg("-L")
         .arg("-o")
-        .arg(&temp_exe)
+        .arg(&temp_tar)
         .arg(download_url)
         .status()?;
 
     if !download_status.success() {
-        return Err(io::Error::other("Failed to download new binary via curl"));
+        return Err(io::Error::other("Failed to download new package via curl"));
+    }
+
+    println!("Extracting package...");
+    let temp_extract_dir = parent_dir.join("agy_extract_temp");
+    if temp_extract_dir.exists() {
+        fs::remove_dir_all(&temp_extract_dir)?;
+    }
+    fs::create_dir_all(&temp_extract_dir)?;
+
+    let tar_status = Command::new("tar")
+        .arg("-xzf")
+        .arg(&temp_tar)
+        .arg("-C")
+        .arg(&temp_extract_dir)
+        .status()?;
+
+    let _ = fs::remove_file(&temp_tar);
+
+    if !tar_status.success() {
+        let _ = fs::remove_dir_all(&temp_extract_dir);
+        return Err(io::Error::other("Failed to extract package via tar"));
+    }
+
+    let temp_exe = temp_extract_dir.join("agy-orchestrator");
+    let temp_public = temp_extract_dir.join("public");
+
+    if !temp_exe.exists() {
+        let _ = fs::remove_dir_all(&temp_extract_dir);
+        return Err(io::Error::other("Package does not contain agy-orchestrator binary"));
     }
 
     #[cfg(unix)]
@@ -319,7 +349,7 @@ pub fn run_remote_upgrade(download_url: &str) -> io::Result<()> {
     match sanity_status {
         Ok(status) if status.success() => {}
         _ => {
-            let _ = fs::remove_file(&temp_exe);
+            let _ = fs::remove_dir_all(&temp_extract_dir);
             return Err(io::Error::other("Downloaded binary failed basic sanity check --help"));
         }
     }
@@ -331,7 +361,16 @@ pub fn run_remote_upgrade(download_url: &str) -> io::Result<()> {
     }
     fs::copy(&current_exe, &backup_exe)?;
 
-    println!("Installing upgraded binary...");
+    let active_public = parent_dir.join("public");
+    let backup_public = parent_dir.join("public.bak");
+    if active_public.exists() {
+        if backup_public.exists() {
+            fs::remove_dir_all(&backup_public)?;
+        }
+        let _ = fs::rename(&active_public, &backup_public);
+    }
+
+    println!("Installing upgraded binary and assets...");
     let old_exe = current_exe.with_extension("old");
     if old_exe.exists() {
         fs::remove_file(&old_exe)?;
@@ -342,12 +381,37 @@ pub fn run_remote_upgrade(download_url: &str) -> io::Result<()> {
         eprintln!("Failed to copy upgraded binary: {}", e);
         println!("Restoring stable backup...");
         let _ = fs::rename(&old_exe, &current_exe);
+        if backup_public.exists() {
+            let _ = fs::remove_dir_all(&active_public);
+            let _ = fs::rename(&backup_public, &active_public);
+        }
         let _ = fs::remove_file(&backup_exe);
-        let _ = fs::remove_file(&temp_exe);
+        let _ = fs::remove_dir_all(&temp_extract_dir);
         return Err(e);
     }
+
+    if temp_public.exists() {
+        if active_public.exists() {
+            let _ = fs::remove_dir_all(&active_public);
+        }
+        if let Err(e) = fs::create_dir_all(&active_public) {
+            eprintln!("Failed to create public directory: {}", e);
+        }
+        let copy_status = Command::new("cp")
+            .arg("-r")
+            .arg(format!("{}/.", temp_public.to_string_lossy()))
+            .arg(&active_public)
+            .status();
+        if let Err(e) = copy_status {
+            eprintln!("Failed to copy public assets: {}", e);
+        }
+    }
+
     let _ = fs::remove_file(&old_exe);
-    let _ = fs::remove_file(&temp_exe);
+    if backup_public.exists() {
+        let _ = fs::remove_dir_all(&backup_public);
+    }
+    let _ = fs::remove_dir_all(&temp_extract_dir);
 
     let daemon_was_running = is_daemon_running();
     let old_pid = get_daemon_pid();
