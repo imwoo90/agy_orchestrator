@@ -251,7 +251,7 @@ pub fn run_daemon_loop() -> io::Result<()> {
                                     );
                                 }
                                 
-                                if let Err(e) = crate::backend::cli::compress_log_file(&log_file_path) {
+                                if let Err(e) = crate::backend::commands::utils::compress_log_file(&log_file_path) {
                                     eprintln!("[Daemon] Failed to auto-compress log for '{}': {}", name, e);
                                 } else if let Ok(new_metadata) = fs::metadata(&log_file_path) {
                                     println!("[Daemon] Auto-compression completed for '{}'. New size: {} bytes.", name, new_metadata.len());

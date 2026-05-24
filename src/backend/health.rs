@@ -9,12 +9,26 @@ use super::state::load_state;
 use super::issue::{load_issues, save_issues};
 
 pub fn find_workspace_root() -> io::Result<PathBuf> {
-    let mut current_dir = std::env::current_exe()?;
-    while current_dir.pop() {
-        if current_dir.join("Cargo.toml").exists() {
-            return Ok(current_dir);
+    // 1. Try finding from current executable path
+    if let Ok(mut current_dir) = std::env::current_exe() {
+        while current_dir.pop() {
+            if current_dir.join("Cargo.toml").exists() {
+                return Ok(current_dir);
+            }
         }
     }
+    
+    // 2. Fallback: Try finding from current working directory
+    let mut current_working_dir = std::env::current_dir()?;
+    loop {
+        if current_working_dir.join("Cargo.toml").exists() {
+            return Ok(current_working_dir);
+        }
+        if !current_working_dir.pop() {
+            break;
+        }
+    }
+
     Err(io::Error::new(io::ErrorKind::NotFound, "Workspace Cargo.toml not found"))
 }
 

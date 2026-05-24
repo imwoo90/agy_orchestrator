@@ -1,7 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use std::fs;
-use std::io;
+use std::fs::{self, File};
+use std::io::{self, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use chrono::Local;
@@ -473,7 +473,35 @@ pub fn run_evolution_harness(issue_id: u32) -> io::Result<()> {
     println!("Evolution Harness: Working directory: {}", workspace_root.display());
 
     let rollback_and_fail = |reason: &str| -> io::Result<()> {
-        eprintln!("HARNESS FAILURE: {}. Initiating rollback...", reason);
+        let logs_dir = get_base_dir().join("logs");
+        let _ = fs::create_dir_all(&logs_dir);
+        let failed_log_path = logs_dir.join(format!("evolution_failed_issue_{}.log", issue_id));
+
+        let diff_content = Command::new("git")
+            .arg("diff")
+            .current_dir(&workspace_root)
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .unwrap_or_else(|_| "Failed to collect git diff".to_string());
+
+        if let Ok(mut f) = File::create(&failed_log_path) {
+            let _ = writeln!(f, "==================================================");
+            let _ = writeln!(f, "🚨 EVOLUTION HARNESS FAILURE DIAGNOSTICS");
+            let _ = writeln!(f, "Issue ID     : #{}", issue_id);
+            let _ = writeln!(f, "Failure Time : {}", Local::now().to_rfc3339());
+            let _ = writeln!(f, "Reason       : {}", reason);
+            let _ = writeln!(f, "--------------------------------------------------");
+            let _ = writeln!(f, "WORK SPACE DIFF AT FAILURE:");
+            let _ = writeln!(f, "{}", diff_content);
+            let _ = writeln!(f, "==================================================");
+        }
+
+        eprintln!(
+            "HARNESS FAILURE: {}. Detailed diagnostics saved to {}. Initiating rollback...",
+            reason,
+            failed_log_path.display()
+        );
+
         let mut issues = load_issues();
         if let Some(issue) = issues.iter_mut().find(|i| i.id == issue_id) {
             issue.status = "failed".to_string();
@@ -483,6 +511,32 @@ pub fn run_evolution_harness(issue_id: u32) -> io::Result<()> {
         let _ = Command::new("git").arg("clean").arg("-fd").current_dir(&workspace_root).status();
         Err(io::Error::other(format!("Evolution Harness rejected changes: {}", reason)))
     };
+
+    // 0. Static Integrity Check (Comment Preservation Gate)
+    println!("Harness Step 0: Checking static integrity (comment preservation)...");
+    // Stage all changes temporarily to include untracked/new files in the diff
+    let _ = Command::new("git").arg("add").arg(".").current_dir(&workspace_root).status();
+    if let Ok(diff_output) = Command::new("git")
+        .arg("diff")
+        .arg("--cached")
+        .current_dir(&workspace_root)
+        .output()
+    {
+        let diff_str = String::from_utf8_lossy(&diff_output.stdout);
+        let removed_comments = diff_str.lines()
+            .filter(|line| line.starts_with("-") && (line.contains("//") || line.contains("///") || line.contains("/*")))
+            .count();
+        let added_comments = diff_str.lines()
+            .filter(|line| line.starts_with("+") && (line.contains("//") || line.contains("///") || line.contains("/*")))
+            .count();
+        // Unstage to let git reset clean up if we rollback
+        let _ = Command::new("git").arg("reset").current_dir(&workspace_root).status();
+
+        if removed_comments > 10 && added_comments * 2 < removed_comments {
+            return rollback_and_fail("Static Integrity Violation: Too many code comments were deleted without replacement.");
+        }
+    }
+    println!("Static integrity checks passed successfully!");
 
     // 1. Run cargo clippy (Lint Gate)
     println!("Harness Step 1: Running cargo clippy --all-targets -- -D warnings...");

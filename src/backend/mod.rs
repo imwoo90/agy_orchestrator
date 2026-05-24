@@ -5,3 +5,4 @@ pub mod issue;
 pub mod state;
 pub mod upgrade;
 pub mod vault;
+pub mod commands;

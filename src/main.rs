@@ -56,7 +56,7 @@ async fn get_vault_notes() -> Result<Vec<(String, String)>, ServerFnError> {
         if let Ok(entries) = std::fs::read_dir(vault_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().map_or(false, |ext| ext == "md") {
+                if path.extension().is_some_and(|ext| ext == "md") {
                     let name = path.file_name().unwrap().to_string_lossy().to_string();
                     if let Ok(content) = std::fs::read_to_string(&path) {
                         notes.push((name, content));
@@ -241,7 +241,7 @@ async fn spawn_project_task(name: String, path: String, goal: String) -> Result<
 async fn get_upgrade_status() -> Result<Option<(String, String)>, ServerFnError> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        Ok(backend::upgrade::check_latest_release().map_err(|e| ServerFnError::new(e.to_string()))?)
+        backend::upgrade::check_latest_release().map_err(|e| ServerFnError::new(e.to_string()))
     }
     #[cfg(target_arch = "wasm32")]
     {
