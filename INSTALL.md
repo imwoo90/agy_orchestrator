@@ -1,81 +1,106 @@
 # 🛠️ Installation & Operation Guide
 
-This guide outlines how to build, install, and operate the **AGY Orchestrator** on your local machine.
+This guide outlines how to build, install, and operate the **AGY Orchestrator** on your local machine. 
+
+Depending on your use case, you can install the pre-compiled production binary directly (Recommended for general users) or compile it from source (Recommended for developers/maintainers).
 
 ---
 
 ## 📋 Prerequisites
 
-Before installing the orchestrator, ensure you have the following requirements installed on your system:
-
-- **Rust toolchain** (v1.75+ recommended): Install via [rustup.rs](https://rustup.rs/)
-- **Dioxus CLI** (for running and building the web dashboard):
-  ```bash
-  cargo install dioxus-cli --version 0.6.0-alpha.5 # Match project dioxus version
-  ```
+Before installing the orchestrator, ensure you have the target execution tool setup:
 - **AGY CLI**: The underlying AI execution tool (`agy`) must be available in your `PATH`.
   - Ensure `/home/user/.local/bin/agy` or equivalent execution path is set up.
 
 ---
 
-## ⚙️ Installation
+## ⚙️ Installation Channels
 
-To compile and install the orchestrator globally on your system, follow these steps:
+Choose one of the two options below to install:
 
-### 1. Build and Install Binary
-Run the following cargo command inside the repository root to compile in release mode and install it to your cargo bin directory (`~/.cargo/bin`):
-```bash
-cargo install --path .
-```
+### Option A: Install Pre-compiled Binary (Standard Mode)
+Best for general users who do not need code compilation or self-evolution features.
 
-### 2. Verify Installation
-Ensure the executable is available in your shell:
-```bash
-agy-orchestrator --help
-```
+1. Go to the GitHub Releases page: [imwoo90/agy_orchestrator Releases](https://github.com/imwoo90/agy_orchestrator/releases).
+2. Download the latest compiled binary (`agy-orchestrator`) for your platform.
+3. Move the binary into your shell's binary path:
+   ```bash
+   mv agy-orchestrator ~/.local/bin/
+   chmod +x ~/.local/bin/agy-orchestrator
+   ```
 > [!NOTE]
-> Make sure `~/.cargo/bin` is added to your shell's `PATH` environment variable (e.g., in `~/.bashrc` or `~/.zshrc`).
+> Running in this mode automatically disables the self-evolution compilation scanner and switches the orchestrator daemon to **Standard Mode** (runs purely as a lightweight agent supervisor without local git workspace dependencies).
+
+---
+
+### Option B: Compile from Source (Developer/Self-Evolution Mode)
+Best for maintainers who want to test local modifications and run self-evolution upgrades.
+
+#### Additional Requirements
+- **Rust toolchain** (v1.75+ recommended): Install via [rustup.rs](https://rustup.rs/)
+- **Dioxus CLI** (for fullstack web server builds):
+  ```bash
+  cargo install dioxus-cli --version 0.6.0-alpha.5
+  ```
+
+#### Build Instructions
+1. Clone the repository and compile:
+   ```bash
+   git clone https://github.com/imwoo90/agy_orchestrator.git
+   cd agy_orchestrator
+   cargo install --path .
+   ```
+2. Verify:
+   ```bash
+   agy-orchestrator --help
+   ```
 
 ---
 
 ## 🚀 Running the Orchestrator
 
-The orchestrator consists of two primary runtime parts: the background daemon and the web dashboard.
+The orchestrator consists of two primary parts: the background daemon and the web dashboard.
 
 ### 1. Starting the Background Daemon
-The daemon monitors active agent tasks, handles log compression, auto-reaps processes, and triggers self-evolution tasks.
-
-To start the daemon in the background:
+The daemon monitors active agent tasks, handles log compression, auto-reaps processes, and scans for upgrades.
 ```bash
 agy-orchestrator daemon --start
 ```
-
-To check daemon status:
-```bash
-agy-orchestrator daemon --status
-```
-
-To stop the daemon:
-```bash
-agy-orchestrator daemon --stop
-```
+- Check status: `agy-orchestrator daemon --status`
+- Stop: `agy-orchestrator daemon --stop`
 
 ---
 
 ### 2. Launching the Web Dashboard
-The web dashboard provides a premium UI to visually track active projects, inspect kanban issues, view vault notes, and review hierarchy tree views of sub-agents.
-
-To start the dashboard server (binds to port 8080 by default):
+The web dashboard provides a premium UI to visually track active projects, inspect issues, view vault notes, and review hierarchy tree views of sub-agents.
 ```bash
 agy-orchestrator dashboard --port 8080
 ```
-Open your browser and navigate to `http://localhost:8080` to access the console interface.
+Open your browser and navigate to `http://localhost:8080`.
+
+---
+
+## 🔄 Updates & Upgrades (OTA)
+
+The orchestrator supports **Over-The-Air (OTA) Updates** via GitHub Releases.
+
+### Automatic Version Notifications
+The background daemon automatically checks for new tags on GitHub every hour. If a new version is detected, a warning notice is sent to `~/.agy_orchestrator/notifications.log`.
+
+### Upgrading via Command Line
+To upgrade your installation directly from the latest GitHub release without compiling from source:
+```bash
+agy-orchestrator self-upgrade --remote
+```
+
+### Upgrading via Web Dashboard
+If a new update is detected, an **`Update to vX.Y.Z 🚀`** button will automatically appear in the top header bar of the Web Dashboard. Click it to perform a non-intrusive upgrade.
 
 ---
 
 ## 🧠 Data & Configuration Structure
 
-All global data and configuration memory are stored inside your user home directory:
+All global configurations, memories, and logs are stored inside your user home directory:
 - **Global Path**: `~/.agy_orchestrator/`
 - **Active Projects List**: `~/.agy_orchestrator/projects.json`
 - **Knowledge Vault**: `~/.agy_orchestrator/memory/vault/` (Obsidian-style Markdown notes)
