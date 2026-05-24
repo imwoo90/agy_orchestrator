@@ -1409,6 +1409,54 @@ pub fn compress_log_file(log_path: &std::path::Path) -> io::Result<()> {
     Ok(())
 }
 
+pub fn get_active_dashboard_info() -> Option<(u32, u16)> {
+    let paths = std::fs::read_dir("/proc").ok()?;
+    for path in paths {
+        let entry = path.ok()?;
+        let file_name = entry.file_name();
+        let pid_str = file_name.to_string_lossy();
+        if let Ok(pid) = pid_str.parse::<u32>() {
+            let cmdline_path = format!("/proc/{}/cmdline", pid);
+            if let Ok(mut file) = File::open(cmdline_path) {
+                let mut contents = Vec::new();
+                if file.read_to_end(&mut contents).is_ok() {
+                    let args: Vec<String> = contents
+                        .split(|&b| b == 0)
+                        .filter_map(|s| {
+                            let s_str = String::from_utf8_lossy(s).to_string();
+                            if s_str.is_empty() {
+                                None
+                            } else {
+                                Some(s_str)
+                            }
+                        })
+                        .collect();
+
+                    if args.is_empty() {
+                        continue;
+                    }
+
+                    let is_orchestrator = args[0].contains("agy-orchestrator");
+                    let has_dashboard = args.iter().any(|arg| arg == "dashboard");
+
+                    if is_orchestrator && has_dashboard {
+                        let mut port = 8080;
+                        for i in 0..args.len() {
+                            if args[i] == "--port" && i + 1 < args.len() {
+                                if let Ok(p) = args[i+1].parse::<u16>() {
+                                    port = p;
+                                }
+                            }
+                        }
+                        return Some((pid, port));
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 pub fn print_info() -> io::Result<()> {
     let current_exe = std::env::current_exe()?;
     let version = env!("CARGO_PKG_VERSION");
@@ -1428,12 +1476,19 @@ pub fn print_info() -> io::Result<()> {
         "STOPPED".to_string()
     };
 
+    let dashboard_status = if let Some((pid, port)) = get_active_dashboard_info() {
+        format!("RUNNING (PID: {}, Port: {})", pid, port)
+    } else {
+        "STOPPED".to_string()
+    };
+
     println!("==================================================");
     println!("🗼 AGY ORCHESTRATOR SYSTEM INFO");
     println!("--------------------------------------------------");
     println!("{:<20} : v{}", "Version", version);
     println!("{:<20} : {}", "Execution Mode", mode);
     println!("{:<20} : {}", "Daemon Status", daemon_status);
+    println!("{:<20} : {}", "Dashboard Status", dashboard_status);
     println!("{:<20} : {}", "Binary Location", current_exe.display());
     println!("{:<20} : {}", "Global Config Path", base_dir.display());
     println!("==================================================");
