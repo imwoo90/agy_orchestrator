@@ -254,6 +254,36 @@ async fn trigger_remote_upgrade(download_url: String) -> Result<(), ServerFnErro
     #[cfg(not(target_arch = "wasm32"))]
     {
         backend::upgrade::run_remote_upgrade(&download_url).map_err(|e| ServerFnError::new(e.to_string()))?;
+        
+        // Spawn a background task to restart the dashboard after a short delay
+        tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            
+            if let Ok(current_exe) = std::env::current_exe() {
+                let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
+                let mut cmd = std::process::Command::new(&current_exe);
+                cmd.arg("dashboard").arg("--port").arg(&port);
+                
+                #[cfg(unix)]
+                {
+                    use std::os::unix::process::CommandExt;
+                    extern "C" {
+                        fn setsid() -> i32;
+                    }
+                    unsafe {
+                        cmd.pre_exec(|| {
+                            setsid();
+                            Ok(())
+                        });
+                    }
+                }
+                
+                let _ = cmd.spawn();
+            }
+            
+            std::process::exit(0);
+        });
+        
         Ok(())
     }
     #[cfg(target_arch = "wasm32")]
