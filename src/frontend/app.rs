@@ -99,9 +99,9 @@ pub fn App() -> Element {
                             class: "text-[10px] bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/20 px-2.5 py-0.5 rounded-full font-bold animate-pulse active:scale-95 transition-all shadow shadow-indigo-900/40 cursor-pointer",
                             onclick: move |_| {
                                 let url = download_url.clone();
-                                async move {
+                                spawn(async move {
                                     let _ = crate::trigger_remote_upgrade(url).await;
-                                }
+                                });
                             },
                             "Update to {tag_name} 🚀"
                         }
