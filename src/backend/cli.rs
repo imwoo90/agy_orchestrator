@@ -158,6 +158,8 @@ pub enum Commands {
         #[arg(long)]
         issue_id: u32,
     },
+    /// Display system information, mode, and background daemon status
+    Info,
 }
 
 pub enum CliResult {
@@ -1310,6 +1312,9 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
         Commands::EvolutionHarness { issue_id } => {
             super::upgrade::run_evolution_harness(issue_id)?;
         }
+        Commands::Info => {
+            print_info()?;
+        }
     }
 
     Ok(CliResult::Exit)
@@ -1401,5 +1406,37 @@ pub fn compress_log_file(log_path: &std::path::Path) -> io::Result<()> {
         writeln!(file, "{}", cl)?;
     }
     
+    Ok(())
+}
+
+pub fn print_info() -> io::Result<()> {
+    let current_exe = std::env::current_exe()?;
+    let version = env!("CARGO_PKG_VERSION");
+    let base_dir = get_base_dir();
+    
+    let is_dev_mode = super::health::find_workspace_root().is_ok();
+    let mode = if is_dev_mode {
+        "Developer (Self-Evolution) Mode"
+    } else {
+        "Standard Mode"
+    };
+
+    let daemon_status = if is_daemon_running() {
+        let pid = get_daemon_pid().unwrap_or(0);
+        format!("RUNNING (PID: {})", pid)
+    } else {
+        "STOPPED".to_string()
+    };
+
+    println!("==================================================");
+    println!("🗼 AGY ORCHESTRATOR SYSTEM INFO");
+    println!("--------------------------------------------------");
+    println!("{:<20} : v{}", "Version", version);
+    println!("{:<20} : {}", "Execution Mode", mode);
+    println!("{:<20} : {}", "Daemon Status", daemon_status);
+    println!("{:<20} : {}", "Binary Location", current_exe.display());
+    println!("{:<20} : {}", "Global Config Path", base_dir.display());
+    println!("==================================================");
+
     Ok(())
 }
