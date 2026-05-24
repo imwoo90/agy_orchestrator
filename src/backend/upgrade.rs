@@ -9,6 +9,37 @@ use chrono::Local;
 use super::issue::{load_issues, save_issues};
 use super::daemon::{is_daemon_running, get_daemon_pid};
 use super::health::{find_workspace_root};
+use super::vault::get_base_dir;
+use std::path::PathBuf;
+
+pub fn restart_daemon_process(current_exe: &Path) -> io::Result<()> {
+    let service_file = get_base_dir().parent().unwrap_or(&PathBuf::from("/home/wimvm")).join(".config/systemd/user/agy-orchestrator.service");
+    if service_file.exists() {
+        println!("Detected systemd user service. Restarting via systemctl...");
+        let systemd_status = Command::new("systemctl")
+            .arg("--user")
+            .arg("restart")
+            .arg("agy-orchestrator.service")
+            .status();
+        
+        if let Ok(status) = systemd_status {
+            if status.success() {
+                println!("Systemd user service restarted successfully.");
+                return Ok(());
+            }
+        }
+        println!("Warning: Failed to restart via systemctl, falling back to legacy start...");
+    }
+
+    let start_status = Command::new(current_exe)
+        .arg("daemon")
+        .arg("--start")
+        .status()?;
+    if !start_status.success() {
+        return Err(io::Error::other("Failed to launch daemon in background"));
+    }
+    Ok(())
+}
 
 pub fn rollback_upgrade(current_exe: &Path, backup_exe: &Path, restart_daemon: bool, reason: &str) -> io::Result<()> {
     eprintln!("CRITICAL ERROR: {}. Initiating rollback...", reason);
@@ -24,10 +55,7 @@ pub fn rollback_upgrade(current_exe: &Path, backup_exe: &Path, restart_daemon: b
 
     if restart_daemon {
         println!("Restarting old daemon...");
-        let _ = Command::new(current_exe)
-            .arg("daemon")
-            .arg("--start")
-            .status();
+        let _ = restart_daemon_process(current_exe);
     }
 
     Err(io::Error::other(format!("Upgrade failed and rolled back: {}", reason)))
@@ -169,13 +197,8 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
         }
 
         println!("Starting upgraded daemon...");
-        let start_status = Command::new(&current_exe)
-            .arg("daemon")
-            .arg("--start")
-            .status()?;
-
-        if !start_status.success() {
-            return rollback_and_fail_issue("Failed to launch new daemon");
+        if let Err(e) = restart_daemon_process(&current_exe) {
+            return rollback_and_fail_issue(&format!("Failed to launch new daemon: {}", e));
         }
 
         println!("Waiting 3 seconds for health check...");
@@ -340,17 +363,12 @@ pub fn run_remote_upgrade(download_url: &str) -> io::Result<()> {
         }
 
         println!("Starting upgraded daemon...");
-        let start_status = Command::new(&current_exe)
-            .arg("daemon")
-            .arg("--start")
-            .status()?;
-
-        if !start_status.success() {
+        if let Err(e) = restart_daemon_process(&current_exe) {
             println!("Launch failed, rolling back daemon...");
             let _ = fs::remove_file(&current_exe);
             let _ = fs::rename(&backup_exe, &current_exe);
-            let _ = Command::new(&current_exe).arg("daemon").arg("--start").status();
-            return Err(io::Error::other("Failed to launch upgraded daemon, rolled back"));
+            let _ = restart_daemon_process(&current_exe);
+            return Err(io::Error::other(format!("Failed to launch upgraded daemon, rolled back: {}", e)));
         }
 
         println!("Waiting 3 seconds for health check...");
@@ -360,7 +378,7 @@ pub fn run_remote_upgrade(download_url: &str) -> io::Result<()> {
             println!("Launch crashed, rolling back daemon...");
             let _ = fs::remove_file(&current_exe);
             let _ = fs::rename(&backup_exe, &current_exe);
-            let _ = Command::new(&current_exe).arg("daemon").arg("--start").status();
+            let _ = restart_daemon_process(&current_exe);
             return Err(io::Error::other("Upgraded daemon crashed immediately, rolled back"));
         }
 
