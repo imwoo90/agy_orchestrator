@@ -31,12 +31,10 @@ jobs:
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@v1.6.4
 
-      - name: Install Dioxus CLI
+      - name: Install and Build with Dioxus
         run: |
-          cargo binstall -y dioxus-cli@0.7.9
-
-      - name: Build with Dioxus
-        run: |
+          cargo binstall --force -y dioxus-cli@0.7.9
+          export PATH="$HOME/.cargo/bin:$PATH"
           dx build --release
 
       - name: Get Version from Cargo.toml
