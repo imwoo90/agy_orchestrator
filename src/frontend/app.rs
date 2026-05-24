@@ -534,25 +534,29 @@ fn IssuesTab(issues: Signal<Vec<Issue>>) -> Element {
                     title: "Open",
                     header_bg: "bg-amber-500/10 border-amber-500/20 text-amber-400",
                     badge_bg: "bg-amber-500/10 text-amber-400",
-                    issues: open_issues
+                    issues: open_issues,
+                    issues_sig: issues
                 }
                 KanbanColumn {
                     title: "In Progress",
                     header_bg: "bg-sky-500/10 border-sky-500/20 text-sky-400",
                     badge_bg: "bg-sky-500/10 text-sky-400 animate-pulse",
-                    issues: in_progress_issues
+                    issues: in_progress_issues,
+                    issues_sig: issues
                 }
                 KanbanColumn {
                     title: "Resolved",
                     header_bg: "bg-emerald-500/10 border-emerald-500/20 text-emerald-400",
                     badge_bg: "bg-emerald-500/10 text-emerald-400",
-                    issues: resolved_issues
+                    issues: resolved_issues,
+                    issues_sig: issues
                 }
                 KanbanColumn {
                     title: "Failed",
                     header_bg: "bg-rose-500/10 border-rose-500/20 text-rose-400",
                     badge_bg: "bg-rose-500/10 text-rose-400",
-                    issues: failed_issues
+                    issues: failed_issues,
+                    issues_sig: issues
                 }
             }
 
@@ -644,7 +648,8 @@ fn KanbanColumn(
     title: &'static str,
     header_bg: &'static str,
     badge_bg: &'static str,
-    issues: Vec<Issue>
+    issues: Vec<Issue>,
+    issues_sig: Signal<Vec<Issue>>
 ) -> Element {
     rsx! {
         div { class: "bg-slate-900/30 border border-slate-850 rounded-2xl p-4 flex flex-col gap-4 min-h-[400px]",
@@ -667,7 +672,43 @@ fn KanbanColumn(
                                 h4 { class: "font-semibold text-slate-200 text-sm leading-snug", "{issue.title}" }
                                 p { class: "text-xs text-slate-400 line-clamp-2 leading-relaxed", "{issue.body}" }
                             }
-                            div { class: "flex items-center justify-between border-t border-slate-850 pt-2.5 text-[10px] text-slate-500",
+                            if issue.status == "open" || issue.status == "failed" {
+                                div { class: "flex items-center gap-2 mt-1 pb-1 border-b border-slate-850/40",
+                                    button {
+                                        class: "flex-1 py-1 rounded bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/20 text-[10px] font-bold active:scale-95 transition-all cursor-pointer text-center",
+                                        onclick: {
+                                            let id = issue.id;
+                                            move |_| {
+                                                spawn(async move {
+                                                    if crate::run_evolution_harness_fn(id).await.is_ok() {
+                                                        if let Ok(i) = crate::get_issues().await {
+                                                            issues_sig.set(i);
+                                                        }
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        "Run Harness ⚙️"
+                                    }
+                                    button {
+                                        class: "flex-1 py-1 rounded bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold active:scale-95 transition-all cursor-pointer text-center",
+                                        onclick: {
+                                            let id = issue.id;
+                                            move |_| {
+                                                spawn(async move {
+                                                    if crate::resolve_issue_fn(id).await.is_ok() {
+                                                        if let Ok(i) = crate::get_issues().await {
+                                                            issues_sig.set(i);
+                                                        }
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        "Resolve ✅"
+                                    }
+                                }
+                            }
+                            div { class: "flex items-center justify-between text-[10px] text-slate-500",
                                 span { "ID: #{issue.id}" }
                                 span { "{issue.created_at.get(..10).unwrap_or(\"\")}" }
                             }

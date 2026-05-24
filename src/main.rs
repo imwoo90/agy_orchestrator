@@ -292,6 +292,70 @@ async fn trigger_remote_upgrade(download_url: String) -> Result<(), ServerFnErro
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
+fn log_notification(msg: &str) {
+    use std::io::Write;
+    let base_dir = backend::vault::get_base_dir();
+    let notifications_path = base_dir.join("notifications.log");
+    if let Ok(mut log_file) = std::fs::OpenOptions::new().create(true).append(true).open(&notifications_path) {
+        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+        let _ = writeln!(log_file, "[{}] {}", timestamp, msg);
+    }
+}
+
+#[server]
+async fn resolve_issue_fn(id: u32) -> Result<(), ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut issues = backend::issue::load_issues();
+        if let Some(issue) = issues.iter_mut().find(|i| i.id == id) {
+            issue.status = "resolved".to_string();
+            issue.resolved_at = Some(chrono::Local::now().to_rfc3339());
+            backend::issue::save_issues(&issues).map_err(|e| ServerFnError::new(e.to_string()))?;
+            log_notification(&format!("INFO: Issue #{} was manually resolved.", id));
+            Ok(())
+        } else {
+            Err(ServerFnError::new("Issue not found"))
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
+}
+
+#[server]
+async fn run_evolution_harness_fn(id: u32) -> Result<(), ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut issues = backend::issue::load_issues();
+        if let Some(issue) = issues.iter_mut().find(|i| i.id == id) {
+            issue.status = "in-progress".to_string();
+            backend::issue::save_issues(&issues).map_err(|e| ServerFnError::new(e.to_string()))?;
+        } else {
+            return Err(ServerFnError::new("Issue not found"));
+        }
+
+        tokio::spawn(async move {
+            log_notification(&format!("INFO: Starting evolution-harness in background for Issue #{}", id));
+            match backend::upgrade::run_evolution_harness(id) {
+                Ok(_) => {
+                    log_notification(&format!("INFO: Evolution-harness for Issue #{} completed successfully!", id));
+                }
+                Err(e) => {
+                    log_notification(&format!("ERROR: Evolution-harness for Issue #{} failed: {}", id, e));
+                }
+            }
+        });
+        Ok(())
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
+}
+
 // Entrypoint
 fn main() -> std::io::Result<()> {
     #[cfg(not(target_arch = "wasm32"))]
