@@ -50,7 +50,7 @@ pub fn run_daemon_loop() -> io::Result<()> {
         tick_count += 1;
         
         // Periodically check for new releases on GitHub (every 1 hour / 720 ticks, or on startup)
-        if tick_count == 1 || tick_count % 720 == 0 {
+        if tick_count == 1 || tick_count.is_multiple_of(720) {
             if let Ok(Some((tag_name, _download_url))) = super::upgrade::check_latest_release() {
                 let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
                 if let Ok(mut log_file) = fs::OpenOptions::new()
@@ -369,7 +369,7 @@ pub fn run_daemon_loop() -> io::Result<()> {
         }
 
         // Run proactive health checks every 12 ticks (~60 seconds)
-        if tick_count % 12 == 0 {
+        if tick_count.is_multiple_of(12) {
             println!("[Daemon] Running periodic health checks (tick #{})...", tick_count);
             match run_health_checks() {
                 Ok(results) => {

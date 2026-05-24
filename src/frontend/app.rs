@@ -194,24 +194,24 @@ pub fn App() -> Element {
                     match active_tab.read().as_str() {
                         "projects" => rsx! {
                             ProjectsTab {
-                                projects: projects.clone(),
-                                system_health: system_health.clone()
+                                projects: projects,
+                                system_health: system_health
                             }
                         },
                         "issues" => rsx! {
                             IssuesTab {
-                                issues: issues.clone()
+                                issues: issues
                             }
                         },
                         "vault" => rsx! {
                             VaultTab {
-                                vault_notes: vault_notes.clone(),
-                                projects: projects.clone()
+                                vault_notes: vault_notes,
+                                projects: projects
                             }
                         },
                         "logs" => rsx! {
                             LogsTab {
-                                logs: logs.clone()
+                                logs: logs
                             }
                         },
                         _ => rsx! { div { "Unknown tab" } }
@@ -824,7 +824,7 @@ fn VaultTab(
                                 }
                                 let name_val = name_with_ext.clone();
                                 let content_val = edit_note_content.read().clone();
-                                if let Ok(_) = crate::save_vault_note(name_val, content_val).await {
+                                if crate::save_vault_note(name_val, content_val).await.is_ok() {
                                     selected_note_index.set(None);
                                     create_mode.set(false);
                                     edit_note_name.set(String::new());

@@ -30,7 +30,7 @@ pub fn rollback_upgrade(current_exe: &Path, backup_exe: &Path, restart_daemon: b
             .status();
     }
 
-    Err(io::Error::new(io::ErrorKind::Other, format!("Upgrade failed and rolled back: {}", reason)))
+    Err(io::Error::other(format!("Upgrade failed and rolled back: {}", reason)))
 }
 
 pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
@@ -61,8 +61,7 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
             let _ = Command::new("git").arg("reset").arg("--hard").arg("HEAD").current_dir(&workspace_root).status();
             let _ = Command::new("git").arg("clean").arg("-fd").current_dir(&workspace_root).status();
         }
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
+        return Err(io::Error::other(
             "Tests failed. Upgrade aborted.",
         ));
     }
@@ -96,8 +95,7 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
             let _ = Command::new("git").arg("reset").arg("--hard").arg("HEAD").current_dir(&workspace_root).status();
             let _ = Command::new("git").arg("clean").arg("-fd").current_dir(&workspace_root).status();
         }
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
+        return Err(io::Error::other(
             "Compilation failed. Upgrade aborted.",
         ));
     }
@@ -231,7 +229,7 @@ pub fn check_latest_release() -> io::Result<Option<(String, String)>> {
         .output()?;
 
     if !output.status.success() {
-        return Err(io::Error::new(io::ErrorKind::Other, "Failed to call GitHub API via curl"));
+        return Err(io::Error::other("Failed to call GitHub API via curl"));
     }
 
     let val: serde_json::Value = serde_json::from_slice(&output.stdout)
@@ -277,7 +275,7 @@ pub fn run_remote_upgrade(download_url: &str) -> io::Result<()> {
         .status()?;
 
     if !download_status.success() {
-        return Err(io::Error::new(io::ErrorKind::Other, "Failed to download new binary via curl"));
+        return Err(io::Error::other("Failed to download new binary via curl"));
     }
 
     #[cfg(unix)]
@@ -299,7 +297,7 @@ pub fn run_remote_upgrade(download_url: &str) -> io::Result<()> {
         Ok(status) if status.success() => {}
         _ => {
             let _ = fs::remove_file(&temp_exe);
-            return Err(io::Error::new(io::ErrorKind::Other, "Downloaded binary failed basic sanity check --help"));
+            return Err(io::Error::other("Downloaded binary failed basic sanity check --help"));
         }
     }
 
@@ -352,7 +350,7 @@ pub fn run_remote_upgrade(download_url: &str) -> io::Result<()> {
             let _ = fs::remove_file(&current_exe);
             let _ = fs::rename(&backup_exe, &current_exe);
             let _ = Command::new(&current_exe).arg("daemon").arg("--start").status();
-            return Err(io::Error::new(io::ErrorKind::Other, "Failed to launch upgraded daemon, rolled back"));
+            return Err(io::Error::other("Failed to launch upgraded daemon, rolled back"));
         }
 
         println!("Waiting 3 seconds for health check...");
@@ -363,7 +361,7 @@ pub fn run_remote_upgrade(download_url: &str) -> io::Result<()> {
             let _ = fs::remove_file(&current_exe);
             let _ = fs::rename(&backup_exe, &current_exe);
             let _ = Command::new(&current_exe).arg("daemon").arg("--start").status();
-            return Err(io::Error::new(io::ErrorKind::Other, "Upgraded daemon crashed immediately, rolled back"));
+            return Err(io::Error::other("Upgraded daemon crashed immediately, rolled back"));
         }
 
         println!("Upgraded daemon is healthy (PID: {:?}).", get_daemon_pid());
@@ -398,7 +396,7 @@ pub fn run_evolution_harness(issue_id: u32) -> io::Result<()> {
         }
         let _ = Command::new("git").arg("reset").arg("--hard").arg("HEAD").current_dir(&workspace_root).status();
         let _ = Command::new("git").arg("clean").arg("-fd").current_dir(&workspace_root).status();
-        Err(io::Error::new(io::ErrorKind::Other, format!("Evolution Harness rejected changes: {}", reason)))
+        Err(io::Error::other(format!("Evolution Harness rejected changes: {}", reason)))
     };
 
     // 1. Run cargo clippy (Lint Gate)

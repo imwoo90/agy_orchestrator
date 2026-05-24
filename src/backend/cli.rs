@@ -280,7 +280,7 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
                 if let Ok(entries) = fs::read_dir(&skills_dir) {
                     for entry in entries.flatten() {
                         let path = entry.path();
-                        if path.extension().map_or(false, |ext| ext == "md") {
+                        if path.extension().is_some_and(|ext| ext == "md") {
                             if let Ok(content) = fs::read_to_string(&path) {
                                 // Basic YAML parser to extract name and description
                                 let mut skill_name = String::new();
@@ -355,7 +355,7 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
                 if let Ok(entries) = fs::read_dir(&vault_dir) {
                     for entry in entries.flatten() {
                         let path = entry.path();
-                        if path.extension().map_or(false, |ext| ext == "md") {
+                        if path.extension().is_some_and(|ext| ext == "md") {
                             let filename = path.file_name().unwrap().to_string_lossy().to_string();
                             let mut file_content = String::new();
                             if let Ok(mut file) = File::open(&path) {
@@ -458,8 +458,8 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
             }
 
             println!(
-                "{:<15} | {:<6} | {:<10} | {:<20} | {}",
-                "Project Name", "PID", "Status", "Spawned At", "Path"
+                "{:<15} | {:<6} | {:<10} | {:<20} | Path",
+                "Project Name", "PID", "Status", "Spawned At"
             );
             println!("{}", "-".repeat(80));
 
@@ -596,11 +596,11 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
             File::open(&report_path)?.read_to_string(&mut report_content)?;
 
             // Parse Lessons Learned / 교훈 / 지식 Section
-            let mut lines = report_content.lines().peekable();
+            let lines = report_content.lines();
             let mut lessons_content = String::new();
             let mut in_lessons = false;
             
-            while let Some(line) = lines.next() {
+            for line in lines {
                 let trimmed = line.trim();
                 if trimmed.starts_with('#') {
                     let header_title = trimmed.trim_start_matches('#').trim().to_lowercase();
@@ -637,7 +637,7 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
                 if let Ok(mut log_file) = fs::OpenOptions::new()
                     .create(true)
                     .append(true)
-                    .open(&base_dir.join("notifications.log"))
+                    .open(base_dir.join("notifications.log"))
                 {
                     let _ = writeln!(
                         log_file,
@@ -734,7 +734,7 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
                 let entry = entry?;
                 let path = entry.path();
                 
-                if path.extension().map_or(false, |ext| ext == "md") {
+                if path.extension().is_some_and(|ext| ext == "md") {
                     let filename = path.file_name().unwrap().to_string_lossy().to_string();
                     let mut file_content = String::new();
                     
@@ -803,7 +803,7 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
             for entry in entries {
                 let entry = entry?;
                 let path = entry.path();
-                if path.extension().map_or(false, |ext| ext == "md") {
+                if path.extension().is_some_and(|ext| ext == "md") {
                     let filename = path.file_name().unwrap().to_string_lossy().to_string();
                     let mut file_content = String::new();
                     if let Ok(mut file) = File::open(&path) {
@@ -932,7 +932,7 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
                 if issues.is_empty() {
                     println!("No registered issues found.");
                 } else {
-                    println!("{:<5} | {:<25} | {:<12} | {:<20} | {}", "ID", "Title", "Status", "Created At", "Body");
+                    println!("{:<5} | {:<25} | {:<12} | {:<20} | Body", "ID", "Title", "Status", "Created At");
                     println!("{}", "-".repeat(95));
                     for issue in &issues {
                         let created = issue.created_at.get(..19).unwrap_or(&issue.created_at).replace('T', " ");
@@ -982,7 +982,7 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
             println!("Running health checks on all registered targets...\n");
             match run_health_checks() {
                 Ok(results) => {
-                    println!("{:<25} | {:<8} | {:<20} | {}", "Target", "Status", "Checked At", "Message");
+                    println!("{:<25} | {:<8} | {:<20} | Message", "Target", "Status", "Checked At");
                     println!("{}", "-".repeat(90));
                     for r in &results {
                         let status = if r.healthy { "✅ OK" } else { "❌ FAIL" };
@@ -1197,7 +1197,7 @@ pub fn run_cli(cli: Cli) -> io::Result<CliResult> {
                 if let Ok(entries) = fs::read_dir(&skills_dir) {
                     for entry in entries.flatten() {
                         let path = entry.path();
-                        if path.extension().map_or(false, |ext| ext == "md") {
+                        if path.extension().is_some_and(|ext| ext == "md") {
                             if let Ok(content) = fs::read_to_string(&path) {
                                 let mut skill_name = String::new();
                                 let mut skill_desc = String::new();
@@ -1319,6 +1319,7 @@ fn text_decorations_helper() {
     println!("--------------------------------------------------");
 }
 
+#[allow(clippy::needless_range_loop)]
 pub fn compress_log_file(log_path: &std::path::Path) -> io::Result<()> {
     if !log_path.exists() {
         return Ok(());
