@@ -5,20 +5,30 @@
 
 echo "🗼 AGY Orchestrator Uninstaller starting..."
 
-# 1. Stop background daemon if running
+# 1. Stop and disable systemd user service if exists
+SYSTEMD_SERVICE_FILE="$HOME/.config/systemd/user/agy-orchestrator.service"
+if [ -f "$SYSTEMD_SERVICE_FILE" ]; then
+    echo "🛑 Disabling and stopping systemd user service..."
+    systemctl --user stop agy-orchestrator.service || true
+    systemctl --user disable agy-orchestrator.service || true
+    rm -f "$SYSTEMD_SERVICE_FILE"
+    systemctl --user daemon-reload
+fi
+
+# 2. Stop legacy background daemon if running via daemon.pid
 PID_PATH="$HOME/.agy_orchestrator/daemon.pid"
 if [ -f "$PID_PATH" ]; then
     DAEMON_PID=$(cat "$PID_PATH")
     if ps -p "$DAEMON_PID" > /dev/null 2>&1; then
-        echo "🛑 Stopping background orchestrator daemon (PID: $DAEMON_PID)..."
+        echo "🛑 Stopping legacy background orchestrator daemon (PID: $DAEMON_PID)..."
         kill "$DAEMON_PID" || true
         sleep 1
     fi
 fi
 
-# 2. Force terminate any orphan agy-orchestrator processes
+# 3. Force terminate any remaining orphan agy-orchestrator processes
 if pgrep -f "agy-orchestrator daemon" > /dev/null 2>&1; then
-    echo "🛑 Terminating running daemon processes..."
+    echo "🛑 Terminating remaining daemon processes..."
     pkill -f "agy-orchestrator daemon" || true
 fi
 

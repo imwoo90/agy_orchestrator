@@ -20,7 +20,7 @@ fi
 # 2. Retrieve latest release URL from GitHub API (independent of jq)
 echo "🔍 Fetching latest release metadata from GitHub..."
 API_URL="https://api.github.com/repos/imwoo90/agy_orchestrator/releases/latest"
-DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "agy-orchestrator" | cut -d '"' -f 4 || true)
+DOWNLOAD_URL=$(curl -s "$API_URL" | grep -o '"browser_download_url": *"[^"]*"' | grep "agy-orchestrator" | cut -d '"' -f 4 || true)
 
 if [ -z "$DOWNLOAD_URL" ]; then
     echo "❌ Error: Could not resolve binary download URL from GitHub Releases."
@@ -44,7 +44,31 @@ mkdir -p "$HOME/.agy_orchestrator/memory/vault"
 mkdir -p "$HOME/.agy_orchestrator/memory/skills"
 mkdir -p "$HOME/.agy_orchestrator/logs"
 
-# 6. Verify installation
+# 6. Set up systemd user service for auto-start on boot & persistence
+SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
+echo "⚙️ Configuring systemd user service..."
+mkdir -p "$SYSTEMD_USER_DIR"
+
+cat <<EOF > "$SYSTEMD_USER_DIR/agy-orchestrator.service"
+[Unit]
+Description=AGY Agentic Orchestrator Background Daemon
+After=network.target
+
+[Service]
+ExecStart=%h/.local/bin/agy-orchestrator daemon --run
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=default.target
+EOF
+
+echo "🔄 Activating and starting agy-orchestrator service..."
+systemctl --user daemon-reload
+systemctl --user enable agy-orchestrator.service
+systemctl --user restart agy-orchestrator.service
+
+# 7. Verify installation
 echo "✅ Verification: Running basic sanity check..."
 "$INSTALL_DIR/agy-orchestrator" --help > /dev/null
 

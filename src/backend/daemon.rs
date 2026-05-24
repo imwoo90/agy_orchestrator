@@ -35,12 +35,26 @@ pub fn run_daemon_loop() -> io::Result<()> {
     let base_dir = get_base_dir();
     let notifications_path = base_dir.join("notifications.log");
 
+    // Write current PID to daemon.pid to allow info/status queries
+    let pid_path = base_dir.join("daemon.pid");
+    let mut pid_file = File::create(&pid_path)?;
+    write!(pid_file, "{}", std::process::id())?;
+
+    // RAII guard to clean up pid file on exit
+    struct PidCleanup<'a>(&'a Path);
+    impl<'a> Drop for PidCleanup<'a> {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(self.0);
+        }
+    }
+    let _cleanup = PidCleanup(&pid_path);
+
     let is_evolution_mode = find_workspace_root().is_ok();
     if is_evolution_mode {
-        println!("Orchestrator daemon started in foreground. [Mode: Self-Evolution]");
+        println!("Orchestrator daemon started. [Mode: Self-Evolution]");
         println!("Monitoring active projects and evolution issues...");
     } else {
-        println!("Orchestrator daemon started in foreground. [Mode: Standard]");
+        println!("Orchestrator daemon started. [Mode: Standard]");
         println!("Monitoring active projects (Self-evolution features are disabled).");
     }
 
