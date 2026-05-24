@@ -2,11 +2,25 @@ use std::io;
 use chrono::Local;
 
 use crate::frontend::app::Issue;
-use crate::backend::issue::{load_issues, save_issues};
+use crate::backend::issue::{load_issues, save_issues, sync_github_issues};
 use crate::backend::cli::CliResult;
 
-pub fn execute(create: Option<String>, body: Option<String>, list: bool, resolve: Option<u32>) -> io::Result<CliResult> {
+pub fn execute(create: Option<String>, body: Option<String>, list: bool, resolve: Option<u32>, sync: bool) -> io::Result<CliResult> {
     let mut issues = load_issues();
+    let mut performed_action = false;
+
+    if sync {
+        println!("Syncing issues from remote GitHub repository...");
+        match sync_github_issues() {
+            Ok(_) => {
+                println!("Successfully synced issues from GitHub.");
+                issues = load_issues();
+            }
+            Err(e) => eprintln!("Error syncing issues from GitHub: {}", e),
+        }
+        performed_action = true;
+    }
+
     if list {
         if issues.is_empty() {
             println!("No registered issues found.");
@@ -26,6 +40,7 @@ pub fn execute(create: Option<String>, body: Option<String>, list: bool, resolve
                 );
             }
         }
+        performed_action = true;
     } else if let Some(title) = create {
         let next_id = issues.iter().map(|i| i.id).max().unwrap_or(0) + 1;
         let body_str = body.unwrap_or_default();
@@ -40,6 +55,7 @@ pub fn execute(create: Option<String>, body: Option<String>, list: bool, resolve
         issues.push(new_issue);
         save_issues(&issues)?;
         println!("Successfully registered issue #{} '{}'.", next_id, title);
+        performed_action = true;
     } else if let Some(id) = resolve {
         if let Some(issue) = issues.iter_mut().find(|i| i.id == id) {
             issue.status = "resolved".to_string();
@@ -50,8 +66,11 @@ pub fn execute(create: Option<String>, body: Option<String>, list: bool, resolve
             eprintln!("Error: Issue #{} not found.", id);
             std::process::exit(1);
         }
-    } else {
-        println!("Please specify --create, --list, or --resolve.");
+        performed_action = true;
+    }
+
+    if !performed_action {
+        println!("Please specify --create, --list, --resolve, or --sync.");
     }
     Ok(CliResult::Exit)
 }

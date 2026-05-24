@@ -9,7 +9,7 @@ use chrono::Local;
 use crate::frontend::app::ProjectInfo;
 use super::vault::get_base_dir;
 use super::state::{load_state, save_state, is_pid_alive};
-use super::issue::{load_issues, save_issues};
+use super::issue::{load_issues, save_issues, sync_github_issues};
 use super::health::{run_health_checks, find_workspace_root};
 
 pub fn get_daemon_pid() -> Option<u32> {
@@ -79,6 +79,14 @@ pub fn run_daemon_loop() -> io::Result<()> {
                     );
                 }
                 println!("[Daemon] A new release '{}' is available on GitHub! Please run 'self-upgrade --remote'.", tag_name);
+            }
+        }
+
+        // Periodically sync GitHub issues (every 10 minutes / 120 ticks, or on startup)
+        if tick_count == 1 || tick_count.is_multiple_of(120) {
+            println!("[Daemon] Syncing issues from GitHub repository...");
+            if let Err(e) = sync_github_issues() {
+                eprintln!("[Daemon] Failed to sync GitHub issues: {}", e);
             }
         }
 

@@ -43,8 +43,8 @@ pub fn execute(command: Commands) -> io::Result<CliResult> {
         Commands::SelfUpgrade { resolve_issue, remote } => {
             upgrade::execute(resolve_issue, remote)
         }
-        Commands::Issue { create, body, list, resolve } => {
-            issue::execute(create, body, list, resolve)
+        Commands::Issue { create, body, list, resolve, sync } => {
+            issue::execute(create, body, list, resolve, sync)
         }
         Commands::Dashboard { port } => {
             Ok(CliResult::StartDashboard { port })

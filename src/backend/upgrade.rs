@@ -6,7 +6,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use chrono::Local;
 
-use super::issue::{load_issues, save_issues};
+use super::issue::{load_issues, save_issues, close_github_issue};
 use super::daemon::{is_daemon_running, get_daemon_pid};
 use super::health::{find_workspace_root};
 use super::vault::get_base_dir;
@@ -570,9 +570,20 @@ pub fn run_evolution_harness(issue_id: u32) -> io::Result<()> {
     let mut issues = load_issues();
     if let Some(issue) = issues.iter_mut().find(|i| i.id == issue_id) {
         let issue_title = issue.title.clone();
+        let issue_body = issue.body.clone();
         issue.status = "resolved".to_string();
         issue.resolved_at = Some(Local::now().to_rfc3339());
         save_issues(&issues)?;
+
+        if let Some(start_idx) = issue_body.find("<!-- github_issue_url: ") {
+            let rest = &issue_body[start_idx + "<!-- github_issue_url: ".len()..];
+            if let Some(end_idx) = rest.find(" -->") {
+                let github_url = &rest[..end_idx];
+                if let Err(e) = close_github_issue(github_url) {
+                    eprintln!("Warning: Failed to auto-close GitHub issue {}: {}", github_url, e);
+                }
+            }
+        }
 
         println!("Harness Step 3: Staging and committing changes to Git...");
         let _ = Command::new("git").arg("add").arg(".").current_dir(&workspace_root).status();

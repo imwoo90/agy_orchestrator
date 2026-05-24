@@ -98,6 +98,9 @@ pub enum Commands {
         /// Mark a specific issue as resolved by ID
         #[arg(long)]
         resolve: Option<u32>,
+        /// Sync open issues from remote GitHub repository
+        #[arg(long)]
+        sync: bool,
     },
     /// Start the embedded web dashboard server
     Dashboard {
