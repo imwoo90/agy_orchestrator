@@ -1,0 +1,77 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - release
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and Deploy Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@v1.6.4
+
+      - name: Install Dioxus CLI
+        run: |
+          cargo binstall -y dioxus-cli@0.7.9
+
+      - name: Build with Dioxus
+        run: |
+          dx build --release
+
+      - name: Get Version from Cargo.toml
+        id: get_version
+        run: |
+          VERSION=$(grep '^version =' Cargo.toml | head -n1 | cut -d'"' -f2)
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version is v$VERSION"
+
+      - name: Manage Tag and Push
+        run: |
+          TAG_NAME="v${{ steps.get_version.outputs.VERSION }}"
+          if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
+            echo "Tag $TAG_NAME already exists."
+          else
+            echo "Creating tag $TAG_NAME"
+            git config --global user.name "github-actions[bot]"
+            git config --global user.email "github-actions[bot]@users.noreply.github.com"
+            git tag "$TAG_NAME"
+            git push origin "$TAG_NAME"
+          fi
+
+      - name: Prepare Release Assets
+        run: |
+          # Copy to a predictable name for the release uploader
+          cp target/dx/agy-orchestrator/release/web/server ./agy-orchestrator
+
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.get_version.outputs.VERSION }}
+          name: Release v${{ steps.get_version.outputs.VERSION }}
+          files: |
+            ./agy-orchestrator
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
