@@ -72,3 +72,31 @@ We have upgraded the visual and usability aspects of the dashboard chat assistan
 - Verified test suite passes successfully.
 - Registered issue #33 on the evolution tracker, ran `evolution-harness` to commit and push changes, and marked it resolved.
 
+
+
+# 📅 History log from 2026-05-26 08:58:33 (Spawned at 2026-05-25T23:15:48+09:00)
+
+# Completion Report: Multi-Room Chat Session, Auto-Incrementing Dev Version & Dashboard Restart
+
+## Description of Work
+We have implemented and verified a highly robust set of features to align with the Hermes-Agent UX and fix operational upgrade issues:
+
+1. **Multi-Room Chat Session Management**:
+   - Implemented `create_chat_session`, `get_chat_sessions`, `delete_chat_session`, `get_active_session_id`, and `set_active_session_id` server functions.
+   - Designed the **Draft-to-UUID Promotion** pattern: fresh chat sessions are generated as `draft-<timestamp>` on the frontend. Upon the first message, backend triggers `agy` without conversation flags. The newly created random UUID brain folder is auto-detected via sorting by recent modified directory, renaming the session ID to UUID in config files.
+   - Refactored `src/frontend/components/chat.rs` with split flex-row layouts, a left sidebar for chat rooms, a Trash button for session deletion, and first-message auto-naming.
+   - Programmatically validated this behavior via the integration test `test_multi_session_chat`.
+
+2. **Auto-Incrementing Local Dev Version**:
+   - Modified `build.rs` to track local dev compile count using the global `~/.agy_orchestrator/dev_build_number` file.
+   - Appends `-dev<Count>` suffix to the version string (e.g. `v0.1.27-dev2`), enabling developers to distinguish consecutive local binary compilations.
+
+3. **Automatic Dashboard Restart during Self-Upgrade**:
+   - Added `restart_dashboard_process` in `src/backend/upgrade.rs` to scan `/proc` cmdlines for running `agy-orchestrator dashboard` processes.
+   - Terminates old dashboard instances and spawns the upgraded dashboard on the previously used port with `setsid()` detached execution.
+
+## Verification
+- Run `cargo test --all-targets` -> 4 tests passed successfully, verifying the multi-session chat isolation.
+- Completed evolution harness gates for Issue #33 and #34.
+- Triggered `self-upgrade`, validating the dev counter increased to `dev2` and the old dashboard process was automatically killed and restarted on port 8080.
+
