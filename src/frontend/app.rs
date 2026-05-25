@@ -24,6 +24,13 @@ pub struct Issue {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ChatMessage {
+    pub is_user: bool,
+    pub text: String,
+    pub timestamp: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct HealthCheckResult {
     pub target: String,
     pub healthy: bool,
@@ -78,6 +85,14 @@ pub fn App() -> Element {
     let mut upgrade_available = use_signal(|| None::<(String, String)>);
     let mut show_feedback_modal = use_signal(|| false);
     let mut upgrade_progress = use_signal(|| UpgradeProgress::Idle);
+    let mut chat_messages = use_signal(Vec::<ChatMessage>::new);
+
+    // Load chat history once on mount
+    let _chat_init = use_future(move || async move {
+        if let Ok(history) = crate::get_chat_history().await {
+            chat_messages.set(history);
+        }
+    });
 
     // Poll data periodically
     let _fetch_future = use_future(move || async move {
@@ -238,7 +253,15 @@ pub fn App() -> Element {
                                 } else {
                                     "hover:bg-slate-800/50 text-slate-400 hover:text-slate-200 border-l-4 border-transparent"
                                 },
-                            onclick: move |_| active_tab.set("chat".to_string()),
+                            onclick: move |_| {
+                                active_tab.set("chat".to_string());
+                                let mut msgs = chat_messages;
+                                spawn(async move {
+                                    if let Ok(history) = crate::get_chat_history().await {
+                                        msgs.set(history);
+                                    }
+                                });
+                            },
                             span { "💬" }
                             "Chat Assistant"
                         }
@@ -278,6 +301,7 @@ pub fn App() -> Element {
                         },
                         "chat" => rsx! {
                             ChatTab {
+                                messages: chat_messages,
                                 issues: issues
                             }
                         },

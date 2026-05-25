@@ -263,6 +263,96 @@ async fn get_upgrade_status() -> Result<Option<(String, String)>, ServerFnError>
 }
 
 #[server]
+async fn get_chat_history() -> Result<Vec<crate::frontend::app::ChatMessage>, ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use crate::frontend::app::ChatMessage;
+        let base_dir = backend::vault::get_base_dir();
+        let chat_id_path = base_dir.join("chat_conversation_id.txt");
+        if !chat_id_path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let id = std::fs::read_to_string(chat_id_path)
+            .map_err(|e| ServerFnError::new(e.to_string()))?
+            .trim()
+            .to_string();
+        if id.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let transcript_path = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain/")
+            .join(&id)
+            .join(".system_generated/logs/transcript_full.jsonl");
+
+        if !transcript_path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let file_content = std::fs::read_to_string(&transcript_path)
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        let mut history = Vec::new();
+        for line in file_content.lines() {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
+                let source = json["source"].as_str().unwrap_or("");
+                let msg_type = json["type"].as_str().unwrap_or("");
+                let content = json["content"].as_str().unwrap_or("");
+
+                let timestamp = if let Some(ts_str) = json["created_at"].as_str() {
+                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts_str) {
+                        dt.with_timezone(&chrono::Local).format("%H:%M").to_string()
+                    } else {
+                        chrono::Local::now().format("%H:%M").to_string()
+                    }
+                } else {
+                    chrono::Local::now().format("%H:%M").to_string()
+                };
+
+                if msg_type == "USER_INPUT" {
+                    let mut text = content.to_string();
+                    if let Some(user_msg_idx) = text.find("User Message:") {
+                        let after_prefix = &text[user_msg_idx + "User Message:".len()..];
+                        if let Some(end_req_idx) = after_prefix.find("</USER_REQUEST>") {
+                            text = after_prefix[..end_req_idx].trim().to_string();
+                        } else {
+                            text = after_prefix.trim().to_string();
+                        }
+                    } else {
+                        if text.starts_with("<USER_REQUEST>") {
+                            text = text.replace("<USER_REQUEST>", "").replace("</USER_REQUEST>", "").trim().to_string();
+                        }
+                    }
+                    history.push(ChatMessage {
+                        is_user: true,
+                        text,
+                        timestamp,
+                    });
+                } else if source == "MODEL" && msg_type == "PLANNER_RESPONSE" {
+                    let mut text = content.to_string();
+                    if let Some(start_idx) = text.find("[CREATE_TASK:") {
+                        if let Some(end_idx) = text[start_idx..].find(']') {
+                            let full_tag = &text[start_idx..start_idx + end_idx + 1];
+                            text = text.replace(full_tag, "").trim().to_string();
+                        }
+                    }
+                    history.push(ChatMessage {
+                        is_user: false,
+                        text,
+                        timestamp,
+                    });
+                }
+            }
+        }
+        Ok(history)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
+}
+
+#[server]
 async fn trigger_remote_upgrade(download_url: String) -> Result<(), ServerFnError> {
     #[cfg(not(target_arch = "wasm32"))]
     {

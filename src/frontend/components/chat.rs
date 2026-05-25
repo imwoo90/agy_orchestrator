@@ -1,13 +1,7 @@
 use dioxus::prelude::*;
 use dioxus::document::eval;
-use crate::frontend::app::Issue;
+use crate::frontend::app::{Issue, ChatMessage};
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct ChatMessage {
-    pub is_user: bool,
-    pub text: String,
-    pub timestamp: String,
-}
 
 #[derive(Debug, Clone, PartialEq)]
 enum InlineSpan {
@@ -288,16 +282,22 @@ fn render_markdown(text: &str) -> Element {
 }
 
 #[component]
-pub fn ChatTab(issues: Signal<Vec<Issue>>) -> Element {
-    let messages = use_signal(|| vec![
-        ChatMessage {
-            is_user: false,
-            text: "Hello! I am your AI Orchestrator Assistant. 🤖\n\nI can help you manage your coding evolution and automate task creation.\n\nType conversational requests, or use a command prefix to create tasks:\n- **create task: [Title]**\n- **add task: [Title]**\n\nHow can I help you today?".to_string(),
-            timestamp: chrono::Local::now().format("%H:%M").to_string(),
-        }
-    ]);
+pub fn ChatTab(messages: Signal<Vec<ChatMessage>>, issues: Signal<Vec<Issue>>) -> Element {
     let mut input_text = use_signal(String::new);
     let is_loading = use_signal(|| false);
+
+    let messages_len = messages.read().len();
+    let display_messages = if messages_len == 0 {
+        vec![
+            ChatMessage {
+                is_user: false,
+                text: "Hello! I am your AI Personal Secretary. 🤖\n\nI can help you manage your projects, check tasks, and automate workflows in a Just-in-Time manner.\n\nAsk me anything, e.g. *'What are the ongoing tasks?'* or *'Show my projects'*!".to_string(),
+                timestamp: chrono::Local::now().format("%H:%M").to_string(),
+            }
+        ]
+    } else {
+        messages.read().clone()
+    };
 
     let send_message = move || {
         let text = input_text.read().trim().to_string();
@@ -403,7 +403,7 @@ pub fn ChatTab(issues: Signal<Vec<Issue>>) -> Element {
 
             // Message Stream Area
             div { class: "flex-1 overflow-y-auto p-6 flex flex-col gap-6 bg-slate-950/30",
-                for msg in messages.read().iter() {
+                for msg in display_messages.iter() {
                     div {
                         class: format!("flex gap-3.5 max-w-[85%] {}", if msg.is_user { "self-end flex-row-reverse" } else { "self-start" }),
                         
