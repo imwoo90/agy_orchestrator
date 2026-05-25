@@ -363,11 +363,133 @@ async fn run_evolution_harness_fn(id: u32) -> Result<(), ServerFnError> {
         });
         Ok(())
     }
+}
+
+#[server]
+async fn send_chat_message(message: String) -> Result<String, ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let msg_trimmed = message.trim();
+        if msg_trimmed.is_empty() {
+            return Ok("Please enter a non-empty message.".to_string());
+        }
+
+        let lower_msg = msg_trimmed.to_lowercase();
+        if lower_msg.starts_with("create task:") || lower_msg.starts_with("add task:") || lower_msg.starts_with("new task:") {
+            let prefix_len = if lower_msg.starts_with("create task:") {
+                "create task:".len()
+            } else if lower_msg.starts_with("add task:") {
+                "add task:".len()
+            } else {
+                "new task:".len()
+            };
+            let title = msg_trimmed[prefix_len..].trim().to_string();
+            if title.is_empty() {
+                return Ok("Please specify a task title (e.g. `create task: Fix layout`).".to_string());
+            }
+
+            let mut issues = backend::issue::load_issues();
+            let next_id = issues.iter().map(|i| i.id).max().unwrap_or(0) + 1;
+            issues.push(Issue {
+                id: next_id,
+                title: title.clone(),
+                body: format!("Automatically created via chat: {}", title),
+                status: "open".to_string(),
+                created_at: chrono::Local::now().to_rfc3339(),
+                resolved_at: None,
+            });
+            backend::issue::save_issues(&issues).map_err(|e| ServerFnError::new(e.to_string()))?;
+            return Ok(format!("I have automatically created the task: **{}** (#{})! You can find it on your Kanban board.", title, next_id));
+        }
+
+        if lower_msg == "help" {
+            return Ok("I am your AGY Orchestrator Assistant! Here are the commands you can use:\n\n- **create task: [Title]** - Automate task creation.\n- **add task: [Title]** - Automate task creation.\n\nType conversational requests like *'I need to fix X'* to talk to the AI (requires `GEMINI_API_KEY` to be set).".to_string());
+        }
+
+        if let Ok(api_key) = std::env::var("GEMINI_API_KEY") {
+            let system_instruction = "You are the AGY Orchestrator AI assistant. You help the user manage their tasks and coding evolution. If the user mentions a specific coding task, issue, or feature they want to build, you can automatically generate a task for them by appending `[CREATE_TASK: Title | Body]` at the very end of your response. Example: 'I\\'ll help you with that. Let\\'s create a task. [CREATE_TASK: Add Dark Mode | Implement dark mode toggling in the dashboard.]'";
+            
+            let escaped_prompt = format!("System Instruction: {}\\n\\nUser Message: {}", system_instruction, msg_trimmed)
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('\n', "\\n")
+                .replace('\r', "\\r");
+
+            let curl_payload = format!(
+                r#"{{"contents": [{{"parts": [{{"text": "{}"}}]}}]}}"#,
+                escaped_prompt
+            );
+
+            let url = format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
+                api_key
+            );
+
+            let output = std::process::Command::new("curl")
+                .arg("-s")
+                .arg("-X")
+                .arg("POST")
+                .arg("-H")
+                .arg("Content-Type: application/json")
+                .arg("-d")
+                .arg(&curl_payload)
+                .arg(&url)
+                .output();
+
+            match output {
+                Ok(out) if out.status.success() => {
+                    let response_body = String::from_utf8_lossy(&out.stdout);
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&response_body) {
+                        if let Some(text) = json["candidates"][0]["content"]["parts"][0]["text"].as_str() {
+                            let mut final_response = text.to_string();
+
+                            if let Some(start_idx) = final_response.find("[CREATE_TASK:") {
+                                if let Some(end_idx) = final_response[start_idx..].find(']') {
+                                    let full_tag = &final_response[start_idx..start_idx + end_idx + 1];
+                                    let content = &final_response[start_idx + "[CREATE_TASK:".len()..start_idx + end_idx];
+                                    
+                                    let parts: Vec<&str> = content.split('|').collect();
+                                    let title = parts.first().unwrap_or(&"").trim().to_string();
+                                    let body = parts.get(1).unwrap_or(&"").trim().to_string();
+
+                                    if !title.is_empty() {
+                                        let mut issues = backend::issue::load_issues();
+                                        let next_id = issues.iter().map(|i| i.id).max().unwrap_or(0) + 1;
+                                        issues.push(Issue {
+                                            id: next_id,
+                                            title: title.clone(),
+                                            body: if body.is_empty() { format!("Automatically created via chat: {}", title) } else { body },
+                                            status: "open".to_string(),
+                                            created_at: chrono::Local::now().to_rfc3339(),
+                                            resolved_at: None,
+                                        });
+                                        let _ = backend::issue::save_issues(&issues);
+                                        
+                                        final_response = final_response.replace(full_tag, "").trim().to_string();
+                                        final_response.push_str(&format!("\n\n*(Created task: **{}** [#{}])*", title, next_id));
+                                    }
+                                }
+                            }
+
+                            return Ok(final_response);
+                        }
+                    }
+                    return Ok("Failed to parse response from Gemini API.".to_string());
+                }
+                _ => {
+                    return Ok("Error calling Gemini API via curl.".to_string());
+                }
+            }
+        }
+
+        Ok("Hello! I am your local rule-based assistant. To enable full conversational AI, please set the `GEMINI_API_KEY` environment variable and restart the application.\n\nCurrently, you can use these shortcuts to automate task creation:\n- **create task: [Title]**\n- **add task: [Title]**".to_string())
+    }
     #[cfg(target_arch = "wasm32")]
     {
         Err(ServerFnError::new("Only available on server"))
     }
 }
+
 
 // Entrypoint
 fn main() -> std::io::Result<()> {

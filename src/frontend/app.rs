@@ -2,7 +2,7 @@ use dioxus::prelude::*;
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
-use crate::frontend::components::{ProjectsTab, IssuesTab, VaultTab, LogsTab, FeedbackModal};
+use crate::frontend::components::{ProjectsTab, IssuesTab, VaultTab, LogsTab, FeedbackModal, ChatTab};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ProjectInfo {
@@ -231,6 +231,17 @@ pub fn App() -> Element {
                             span { "📟" }
                             "Live Logs"
                         }
+                        button {
+                            class: "flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 "
+                                .to_string() + if *active_tab.read() == "chat" {
+                                    "bg-indigo-600/20 text-indigo-200 border-l-4 border-indigo-500"
+                                } else {
+                                    "hover:bg-slate-800/50 text-slate-400 hover:text-slate-200 border-l-4 border-transparent"
+                                },
+                            onclick: move |_| active_tab.set("chat".to_string()),
+                            span { "💬" }
+                            "Chat Assistant"
+                        }
                     }
                     button {
                         class: "flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 hover:bg-slate-800/40 text-slate-400 hover:text-slate-200 border border-slate-800/30 hover:border-slate-700/60 shadow shadow-slate-950/20 active:scale-95 mb-2 cursor-pointer",
@@ -263,6 +274,11 @@ pub fn App() -> Element {
                         "logs" => rsx! {
                             LogsTab {
                                 logs: logs
+                            }
+                        },
+                        "chat" => rsx! {
+                            ChatTab {
+                                issues: issues
                             }
                         },
                         _ => rsx! { div { "Unknown tab" } }
