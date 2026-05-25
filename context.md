@@ -8,7 +8,7 @@ JIT Memory Agent Orchestrator & Knowledge Vault for AI coding assistants.
 - **Persistent Service**: Automatically configured via standard `systemd` user service (`agy-orchestrator.service`) during installation.
 - **Self-Evolution**: Active git developer workspaces can spawn evolution tasks, self-verify using Clippy/cargo-test harness, and auto-release.
 
-## System CLI State (v0.1.13)
+## System CLI State (v0.1.18)
 - **Daemon Loop**: Handles process status, auto-consolidation of reports, log auto-compression, issues execution, and GitHub version checks.
 - **Upgrade Process**: Automatically downloads, extracts, and deploys `tar.gz` package containing binary and frontend `public` assets, restarts the systemd service smoothly, and auto-closes resolved remote GitHub issues using the `GITHUB_TOKEN`.
 - **Upgrade Diagnostics**: Displays real-time visual progress monitoring (downloading, installing, restarting) and error diagnostics in the dashboard modal with automatic browser reload on success.
