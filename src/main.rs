@@ -374,7 +374,7 @@ fn main() -> std::io::Result<()> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let has_args = std::env::args().len() > 1;
-        let is_dioxus_env = std::env::var("PORT").is_ok() || std::env::var("ADDR").is_ok() || std::env::var("DIOXUS_ACTIVE").is_ok();
+        let is_dioxus_env = std::env::var("PORT").is_ok() || std::env::var("ADDR").is_ok() || std::env::var("IP").is_ok() || std::env::var("DIOXUS_ACTIVE").is_ok();
 
         if !has_args || is_dioxus_env {
             // Under dx serve or when direct execution with no args is called, boot up Dioxus.
@@ -389,6 +389,7 @@ fn main() -> std::io::Result<()> {
                     // Set port and address in environment so dioxus can find it
                     std::env::set_var("PORT", port.to_string());
                     std::env::set_var("ADDR", "0.0.0.0");
+                    std::env::set_var("IP", "0.0.0.0");
                     dioxus::launch(frontend::App);
                     Ok(())
                 }

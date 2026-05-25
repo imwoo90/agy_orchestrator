@@ -36,6 +36,7 @@ pub fn restart_daemon_process(current_exe: &Path) -> io::Result<()> {
         .arg("--start")
         .env_remove("PORT")
         .env_remove("ADDR")
+        .env_remove("IP")
         .env_remove("DIOXUS_ACTIVE")
         .status()?;
     if !start_status.success() {
@@ -180,6 +181,7 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
         .arg("--help")
         .env_remove("PORT")
         .env_remove("ADDR")
+        .env_remove("IP")
         .env_remove("DIOXUS_ACTIVE")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -199,6 +201,7 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
             .arg("--stop")
             .env_remove("PORT")
             .env_remove("ADDR")
+            .env_remove("IP")
             .env_remove("DIOXUS_ACTIVE")
             .status()?;
         if !stop_status.success() {
@@ -356,6 +359,7 @@ pub fn run_remote_upgrade(download_url: &str) -> io::Result<()> {
         .arg("--help")
         .env_remove("PORT")
         .env_remove("ADDR")
+        .env_remove("IP")
         .env_remove("DIOXUS_ACTIVE")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -444,6 +448,7 @@ pub fn run_remote_upgrade(download_url: &str) -> io::Result<()> {
             .arg("--stop")
             .env_remove("PORT")
             .env_remove("ADDR")
+            .env_remove("IP")
             .env_remove("DIOXUS_ACTIVE")
             .status()?;
         if !stop_status.success() {
