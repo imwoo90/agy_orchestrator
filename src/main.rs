@@ -262,27 +262,70 @@ async fn get_upgrade_status() -> Result<Option<(String, String)>, ServerFnError>
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
+fn load_chat_sessions() -> Result<Vec<crate::frontend::app::ChatSession>, String> {
+    let base_dir = backend::vault::get_base_dir();
+    let sessions_path = base_dir.join("chat_sessions.json");
+    if !sessions_path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = std::fs::read_to_string(&sessions_path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&content).map_err(|e| e.to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
+fn save_chat_sessions(sessions: &[crate::frontend::app::ChatSession]) -> Result<(), String> {
+    let base_dir = backend::vault::get_base_dir();
+    let sessions_path = base_dir.join("chat_sessions.json");
+    let content = serde_json::to_string_pretty(sessions).map_err(|e| e.to_string())?;
+    std::fs::write(&sessions_path, content).map_err(|e| e.to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
+fn uuid_v4_fallback() -> String {
+    if let Ok(uuid) = std::fs::read_to_string("/proc/sys/kernel/random/uuid") {
+        uuid.trim().to_string()
+    } else {
+        let ts = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        format!("session-{}", ts)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
+fn check_and_rename_session(session_id: &str, first_msg: &str) -> Result<(), String> {
+    let mut sessions = load_chat_sessions()?;
+    if let Some(session) = sessions.iter_mut().find(|s| s.id == session_id) {
+        if session.title == "New Chat" {
+            let mut title = first_msg.trim().to_string();
+            if title.len() > 30 {
+                title = format!("{}...", &title[..28]);
+            }
+            session.title = title;
+            session.updated_at = chrono::Local::now().to_rfc3339();
+            save_chat_sessions(&sessions)?;
+        } else {
+            session.updated_at = chrono::Local::now().to_rfc3339();
+            save_chat_sessions(&sessions)?;
+        }
+    }
+    Ok(())
+}
+
 #[server]
-async fn get_chat_history() -> Result<Vec<crate::frontend::app::ChatMessage>, ServerFnError> {
+async fn get_chat_history(session_id: String) -> Result<Vec<crate::frontend::app::ChatMessage>, ServerFnError> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         use crate::frontend::app::ChatMessage;
-        let base_dir = backend::vault::get_base_dir();
-        let chat_id_path = base_dir.join("chat_conversation_id.txt");
-        if !chat_id_path.exists() {
-            return Ok(Vec::new());
-        }
-
-        let id = std::fs::read_to_string(chat_id_path)
-            .map_err(|e| ServerFnError::new(e.to_string()))?
-            .trim()
-            .to_string();
-        if id.is_empty() {
+        if session_id.is_empty() {
             return Ok(Vec::new());
         }
 
         let transcript_path = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain/")
-            .join(&id)
+            .join(&session_id)
             .join(".system_generated/logs/transcript_full.jsonl");
 
         if !transcript_path.exists() {
@@ -345,6 +388,116 @@ async fn get_chat_history() -> Result<Vec<crate::frontend::app::ChatMessage>, Se
             }
         }
         Ok(history)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
+}
+
+#[server]
+async fn get_chat_sessions() -> Result<Vec<crate::frontend::app::ChatSession>, ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        load_chat_sessions().map_err(|e| ServerFnError::new(e))
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
+}
+
+#[server]
+async fn create_chat_session() -> Result<String, ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let id = uuid_v4_fallback();
+        let timestamp = chrono::Local::now().to_rfc3339();
+        let new_session = crate::frontend::app::ChatSession {
+            id: id.clone(),
+            title: "New Chat".to_string(),
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+        };
+        
+        let mut sessions = load_chat_sessions().unwrap_or_default();
+        sessions.push(new_session);
+        save_chat_sessions(&sessions).map_err(|e| ServerFnError::new(e))?;
+        
+        let base_dir = backend::vault::get_base_dir();
+        let _ = std::fs::write(base_dir.join("active_chat_session_id.txt"), &id);
+        
+        Ok(id)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
+}
+
+#[server]
+async fn delete_chat_session(id: String) -> Result<(), ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut sessions = load_chat_sessions().unwrap_or_default();
+        sessions.retain(|s| s.id != id);
+        save_chat_sessions(&sessions).map_err(|e| ServerFnError::new(e))?;
+        
+        let brain_dir = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(&id);
+        if brain_dir.exists() {
+            let _ = std::fs::remove_dir_all(brain_dir);
+        }
+        
+        let base_dir = backend::vault::get_base_dir();
+        let active_path = base_dir.join("active_chat_session_id.txt");
+        if active_path.exists() {
+            if let Ok(active_id) = std::fs::read_to_string(&active_path) {
+                if active_id.trim() == id {
+                    let _ = std::fs::remove_file(&active_path);
+                }
+            }
+        }
+        Ok(())
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
+}
+
+#[server]
+async fn get_active_session_id() -> Result<Option<String>, ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let base_dir = backend::vault::get_base_dir();
+        let active_path = base_dir.join("active_chat_session_id.txt");
+        if !active_path.exists() {
+            return Ok(None);
+        }
+        let id = std::fs::read_to_string(active_path)
+            .map_err(|e| ServerFnError::new(e.to_string()))?
+            .trim()
+            .to_string();
+        if id.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(id))
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
+}
+
+#[server]
+async fn set_active_session_id(id: String) -> Result<(), ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let base_dir = backend::vault::get_base_dir();
+        let active_path = base_dir.join("active_chat_session_id.txt");
+        std::fs::write(active_path, id.trim()).map_err(|e| ServerFnError::new(e.to_string()))?;
+        Ok(())
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -463,13 +616,15 @@ async fn run_evolution_harness_fn(id: u32) -> Result<(), ServerFnError> {
 }
 
 #[server]
-#[server]
-async fn send_chat_message(message: String) -> Result<String, ServerFnError> {
+async fn send_chat_message(session_id: String, message: String) -> Result<String, ServerFnError> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let msg_trimmed = message.trim();
         if msg_trimmed.is_empty() {
             return Ok("Please enter a non-empty message.".to_string());
+        }
+        if session_id.is_empty() {
+            return Err(ServerFnError::new("No active session ID provided"));
         }
 
         let lower_msg = msg_trimmed.to_lowercase();
@@ -497,6 +652,9 @@ async fn send_chat_message(message: String) -> Result<String, ServerFnError> {
                 resolved_at: None,
             });
             backend::issue::save_issues(&issues).map_err(|e| ServerFnError::new(e.to_string()))?;
+            
+            let _ = check_and_rename_session(&session_id, &format!("Create Task: {}", title));
+
             return Ok(format!("I have automatically created the task: **{}** (#{})! You can find it on your Kanban board.", title, next_id));
         }
 
@@ -505,10 +663,11 @@ async fn send_chat_message(message: String) -> Result<String, ServerFnError> {
         }
 
         if lower_msg == "clear session" || lower_msg == "reset session" || lower_msg == "reset chat" {
-            let base_dir = backend::vault::get_base_dir();
-            let chat_id_path = base_dir.join("chat_conversation_id.txt");
-            let _ = std::fs::remove_file(chat_id_path);
-            return Ok("Chat session has been reset. The next message will start a new conversation.".to_string());
+            let brain_dir = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(&session_id);
+            if brain_dir.exists() {
+                let _ = std::fs::remove_dir_all(brain_dir);
+            }
+            return Ok("This chat session has been reset. The next message will start a new conversation.".to_string());
         }
 
         let global_instr_path = backend::vault::get_base_dir().join("memory/system_instructions.md");
@@ -538,96 +697,59 @@ async fn send_chat_message(message: String) -> Result<String, ServerFnError> {
             msg_trimmed
         );
 
-        let base_dir = backend::vault::get_base_dir();
-        let chat_id_path = base_dir.join("chat_conversation_id.txt");
-        let mut active_conv_id = None;
-
-        if chat_id_path.exists() {
-            if let Ok(id) = std::fs::read_to_string(&chat_id_path) {
-                let trimmed_id = id.trim().to_string();
-                if !trimmed_id.is_empty() {
-                    let brain_dir = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(&trimmed_id);
-                    if brain_dir.exists() {
-                        active_conv_id = Some(trimmed_id);
-                    }
-                }
-            }
-        }
-
         let mut cmd = std::process::Command::new("/home/wimvm/.local/bin/agy");
         cmd.arg("--prompt").arg(&prompt_payload);
         cmd.arg("--dangerously-skip-permissions");
+        cmd.arg("--conversation").arg(&session_id);
 
-        if let Some(ref conv_id) = active_conv_id {
-            cmd.arg("--conversation").arg(conv_id);
+        let brain_dir = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(&session_id);
+        if brain_dir.exists() {
             cmd.arg("--continue");
         }
 
         let output = cmd.output();
-        let is_new = active_conv_id.is_none();
 
         match output {
             Ok(out) if out.status.success() => {
-                if is_new {
-                    if let Ok(path_output) = std::process::Command::new("sh")
-                        .arg("-c")
-                        .arg("ls -td /home/wimvm/.gemini/antigravity-cli/brain/*/ | head -n 1")
-                        .output()
-                    {
-                        if path_output.status.success() {
-                            let path_str = String::from_utf8_lossy(&path_output.stdout).trim().to_string();
-                            if !path_str.is_empty() {
-                                if let Some(filename) = std::path::Path::new(&path_str).file_name() {
-                                    let new_id = filename.to_string_lossy().into_owned();
-                                    let _ = std::fs::write(&chat_id_path, &new_id);
-                                    active_conv_id = Some(new_id);
-                                }
-                            }
-                        }
-                    }
-                }
+                let _ = check_and_rename_session(&session_id, msg_trimmed);
 
-                if let Some(ref conv_id) = active_conv_id {
-                    match get_transcript_content_by_id(conv_id) {
-                        Ok(clean_reply) => {
-                            let mut final_response = clean_reply;
+                match get_transcript_content_by_id(&session_id) {
+                    Ok(clean_reply) => {
+                        let mut final_response = clean_reply;
 
-                            if let Some(start_idx) = final_response.find("[CREATE_TASK:") {
-                                if let Some(end_idx) = final_response[start_idx..].find(']') {
-                                    let full_tag = &final_response[start_idx..start_idx + end_idx + 1];
-                                    let content = &final_response[start_idx + "[CREATE_TASK:".len()..start_idx + end_idx];
+                        if let Some(start_idx) = final_response.find("[CREATE_TASK:") {
+                            if let Some(end_idx) = final_response[start_idx..].find(']') {
+                                let full_tag = &final_response[start_idx..start_idx + end_idx + 1];
+                                let content = &final_response[start_idx + "[CREATE_TASK:".len()..start_idx + end_idx];
+                                
+                                let parts: Vec<&str> = content.split('|').collect();
+                                let title = parts.first().unwrap_or(&"").trim().to_string();
+                                let body = parts.get(1).unwrap_or(&"").trim().to_string();
+
+                                if !title.is_empty() {
+                                    let mut issues = backend::issue::load_issues();
+                                    let next_id = issues.iter().map(|i| i.id).max().unwrap_or(0) + 1;
+                                    issues.push(Issue {
+                                        id: next_id,
+                                        title: title.clone(),
+                                        body: if body.is_empty() { format!("Automatically created via chat: {}", title) } else { body },
+                                        status: "open".to_string(),
+                                        created_at: chrono::Local::now().to_rfc3339(),
+                                        resolved_at: None,
+                                    });
+                                    let _ = backend::issue::save_issues(&issues);
                                     
-                                    let parts: Vec<&str> = content.split('|').collect();
-                                    let title = parts.first().unwrap_or(&"").trim().to_string();
-                                    let body = parts.get(1).unwrap_or(&"").trim().to_string();
-
-                                    if !title.is_empty() {
-                                        let mut issues = backend::issue::load_issues();
-                                        let next_id = issues.iter().map(|i| i.id).max().unwrap_or(0) + 1;
-                                        issues.push(Issue {
-                                            id: next_id,
-                                            title: title.clone(),
-                                            body: if body.is_empty() { format!("Automatically created via chat: {}", title) } else { body },
-                                            status: "open".to_string(),
-                                            created_at: chrono::Local::now().to_rfc3339(),
-                                            resolved_at: None,
-                                        });
-                                        let _ = backend::issue::save_issues(&issues);
-                                        
-                                        final_response = final_response.replace(full_tag, "").trim().to_string();
-                                        final_response.push_str(&format!("\n\n*(Created task: **{}** [#{}])*", title, next_id));
-                                    }
+                                    final_response = final_response.replace(full_tag, "").trim().to_string();
+                                    final_response.push_str(&format!("\n\n*(Created task: **{}** [#{}])*", title, next_id));
                                 }
                             }
+                        }
 
-                            Ok(final_response)
-                        }
-                        Err(e) => {
-                            Ok(format!("Failed to retrieve agent response: {}", e))
-                        }
+                        Ok(final_response)
                     }
-                } else {
-                    Ok("Failed to initialize conversation ID.".to_string())
+                    Err(e) => {
+                        Ok(format!("Failed to retrieve agent response: {}", e))
+                    }
                 }
             }
             _ => {
@@ -646,7 +768,7 @@ async fn send_chat_message(message: String) -> Result<String, ServerFnError> {
 fn get_transcript_content_by_id(conversation_id: &str) -> Result<String, String> {
     let transcript_path = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain")
         .join(conversation_id)
-        .join(".system_generated/logs/transcript.jsonl");
+        .join(".system_generated/logs/transcript_full.jsonl");
     if !transcript_path.exists() {
         return Err("Transcript file does not exist".to_string());
     }

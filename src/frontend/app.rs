@@ -31,6 +31,14 @@ pub struct ChatMessage {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ChatSession {
+    pub id: String,
+    pub title: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct HealthCheckResult {
     pub target: String,
     pub healthy: bool,
@@ -86,11 +94,19 @@ pub fn App() -> Element {
     let mut show_feedback_modal = use_signal(|| false);
     let mut upgrade_progress = use_signal(|| UpgradeProgress::Idle);
     let mut chat_messages = use_signal(Vec::<ChatMessage>::new);
+    let mut active_session_id = use_signal(|| None::<String>);
+    let mut chat_sessions = use_signal(Vec::<ChatSession>::new);
 
     // Load chat history once on mount
     let _chat_init = use_future(move || async move {
-        if let Ok(history) = crate::get_chat_history().await {
-            chat_messages.set(history);
+        if let Ok(sessions) = crate::get_chat_sessions().await {
+            chat_sessions.set(sessions);
+        }
+        if let Ok(Some(active_id)) = crate::get_active_session_id().await {
+            active_session_id.set(Some(active_id.clone()));
+            if let Ok(history) = crate::get_chat_history(active_id).await {
+                chat_messages.set(history);
+            }
         }
     });
 
@@ -256,9 +272,24 @@ pub fn App() -> Element {
                             onclick: move |_| {
                                 active_tab.set("chat".to_string());
                                 let mut msgs = chat_messages;
+                                let mut sessions_sig = chat_sessions;
+                                let mut active_sig = active_session_id;
                                 spawn(async move {
-                                    if let Ok(history) = crate::get_chat_history().await {
-                                        msgs.set(history);
+                                    if let Ok(sessions) = crate::get_chat_sessions().await {
+                                        sessions_sig.set(sessions);
+                                    }
+                                    match crate::get_active_session_id().await {
+                                        Ok(Some(active_id)) => {
+                                            active_sig.set(Some(active_id.clone()));
+                                            if let Ok(history) = crate::get_chat_history(active_id).await {
+                                                msgs.set(history);
+                                            }
+                                        }
+                                        Ok(None) => {
+                                            active_sig.set(None);
+                                            msgs.set(Vec::new());
+                                        }
+                                        Err(_) => {}
                                     }
                                 });
                             },
@@ -302,7 +333,9 @@ pub fn App() -> Element {
                         "chat" => rsx! {
                             ChatTab {
                                 messages: chat_messages,
-                                issues: issues
+                                issues: issues,
+                                active_session_id: active_session_id,
+                                chat_sessions: chat_sessions
                             }
                         },
                         _ => rsx! { div { "Unknown tab" } }
