@@ -100,7 +100,7 @@ async fn submit_feedback_fn(raw_text: String) -> Result<FeedbackResponse, Server
     #[cfg(not(target_arch = "wasm32"))]
     {
         backend::issue::create_refined_feedback_issue(raw_text)
-            .map_err(|e| ServerFnError::new(e))
+            .map_err(ServerFnError::new)
     }
     #[cfg(target_arch = "wasm32")]
     {

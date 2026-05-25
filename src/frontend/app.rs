@@ -58,6 +58,14 @@ async fn sleep_ms(ms: u32) {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+fn reload_page() {
+    spawn(async move {
+        let mut eval_js = document::eval("window.location.reload();");
+        let _ = eval_js.recv::<()>().await;
+    });
+}
+
 #[allow(non_snake_case)]
 pub fn App() -> Element {
     let mut active_tab = use_signal(|| "projects".to_string());
@@ -129,8 +137,8 @@ pub fn App() -> Element {
                                             progress.set(UpgradeProgress::Restarting);
                                             sleep_ms(4000).await;
                                             progress.set(UpgradeProgress::Success);
-                                            let mut eval_js = document::eval("window.location.reload();");
-                                            let _ = eval_js.recv::<()>().await;
+                                            #[cfg(target_arch = "wasm32")]
+                                            reload_page();
                                         }
                                         Err(e) => {
                                             progress.set(UpgradeProgress::Failed(e.to_string()));

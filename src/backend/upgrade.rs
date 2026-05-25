@@ -351,9 +351,15 @@ pub fn run_remote_upgrade(download_url: &str) -> io::Result<()> {
 
     match sanity_status {
         Ok(status) if status.success() => {}
-        _ => {
+        Ok(status) => {
+            eprintln!("SANITY CHECK FAILED: exit status {:?}", status);
             let _ = fs::remove_dir_all(&temp_extract_dir);
-            return Err(io::Error::other("Downloaded binary failed basic sanity check --help"));
+            return Err(io::Error::other(format!("Downloaded binary failed basic sanity check --help: {:?}", status)));
+        }
+        Err(e) => {
+            eprintln!("SANITY CHECK FAILED to start: {}", e);
+            let _ = fs::remove_dir_all(&temp_extract_dir);
+            return Err(io::Error::other(format!("Downloaded binary failed basic sanity check --help to start: {}", e)));
         }
     }
 
