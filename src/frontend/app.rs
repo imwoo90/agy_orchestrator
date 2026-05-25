@@ -2,7 +2,7 @@ use dioxus::prelude::*;
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
-use crate::frontend::components::{ProjectsTab, IssuesTab, VaultTab, LogsTab};
+use crate::frontend::components::{ProjectsTab, IssuesTab, VaultTab, LogsTab, FeedbackModal};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ProjectInfo {
@@ -31,6 +31,12 @@ pub struct HealthCheckResult {
     pub checked_at: String,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum FeedbackResponse {
+    Submitted { title: String, url: String },
+    PrefilledUrl { title: String, body: String, url: String },
+}
+
 async fn sleep_ms(ms: u32) {
     #[cfg(target_arch = "wasm32")]
     {
@@ -52,6 +58,7 @@ pub fn App() -> Element {
     let mut system_health = use_signal(Vec::new);
     let mut daemon_running = use_signal(|| false);
     let mut upgrade_available = use_signal(|| None::<(String, String)>);
+    let mut show_feedback_modal = use_signal(|| false);
 
     // Poll data periodically
     let _fetch_future = use_future(move || async move {
@@ -144,50 +151,58 @@ pub fn App() -> Element {
             // Main Body Area
             div { class: "flex-1 flex overflow-hidden",
                 // Sidebar Navigation
-                nav { class: "w-64 bg-slate-900/40 border-r border-slate-850 p-4 flex flex-col gap-2 shrink-0",
-                    button {
-                        class: "flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 "
-                            .to_string() + if *active_tab.read() == "projects" {
-                                "bg-indigo-600/20 text-indigo-200 border-l-4 border-indigo-500"
-                            } else {
-                                "hover:bg-slate-800/50 text-slate-400 hover:text-slate-200 border-l-4 border-transparent"
-                            },
-                        onclick: move |_| active_tab.set("projects".to_string()),
-                        span { "📂" }
-                        "Active Projects"
+                nav { class: "w-64 bg-slate-900/40 border-r border-slate-850 p-4 flex flex-col justify-between shrink-0",
+                    div { class: "flex flex-col gap-2",
+                        button {
+                            class: "flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 "
+                                .to_string() + if *active_tab.read() == "projects" {
+                                    "bg-indigo-600/20 text-indigo-200 border-l-4 border-indigo-500"
+                                } else {
+                                    "hover:bg-slate-800/50 text-slate-400 hover:text-slate-200 border-l-4 border-transparent"
+                                },
+                            onclick: move |_| active_tab.set("projects".to_string()),
+                            span { "📂" }
+                            "Active Projects"
+                        }
+                        button {
+                            class: "flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 "
+                                .to_string() + if *active_tab.read() == "issues" {
+                                    "bg-indigo-600/20 text-indigo-200 border-l-4 border-indigo-500"
+                                } else {
+                                    "hover:bg-slate-800/50 text-slate-400 hover:text-slate-200 border-l-4 border-transparent"
+                                },
+                            onclick: move |_| active_tab.set("issues".to_string()),
+                            span { "📋" }
+                            "Kanban Issues"
+                        }
+                        button {
+                            class: "flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 "
+                                .to_string() + if *active_tab.read() == "vault" {
+                                    "bg-indigo-600/20 text-indigo-200 border-l-4 border-indigo-500"
+                                } else {
+                                    "hover:bg-slate-800/50 text-slate-400 hover:text-slate-200 border-l-4 border-transparent"
+                                },
+                            onclick: move |_| active_tab.set("vault".to_string()),
+                            span { "🗂️" }
+                            "Knowledge Vault"
+                        }
+                        button {
+                            class: "flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 "
+                                .to_string() + if *active_tab.read() == "logs" {
+                                    "bg-indigo-600/20 text-indigo-200 border-l-4 border-indigo-500"
+                                } else {
+                                    "hover:bg-slate-800/50 text-slate-400 hover:text-slate-200 border-l-4 border-transparent"
+                                },
+                            onclick: move |_| active_tab.set("logs".to_string()),
+                            span { "📟" }
+                            "Live Logs"
+                        }
                     }
                     button {
-                        class: "flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 "
-                            .to_string() + if *active_tab.read() == "issues" {
-                                "bg-indigo-600/20 text-indigo-200 border-l-4 border-indigo-500"
-                            } else {
-                                "hover:bg-slate-800/50 text-slate-400 hover:text-slate-200 border-l-4 border-transparent"
-                            },
-                        onclick: move |_| active_tab.set("issues".to_string()),
-                        span { "📋" }
-                        "Kanban Issues"
-                    }
-                    button {
-                        class: "flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 "
-                            .to_string() + if *active_tab.read() == "vault" {
-                                "bg-indigo-600/20 text-indigo-200 border-l-4 border-indigo-500"
-                            } else {
-                                "hover:bg-slate-800/50 text-slate-400 hover:text-slate-200 border-l-4 border-transparent"
-                            },
-                        onclick: move |_| active_tab.set("vault".to_string()),
-                        span { "🗂️" }
-                        "Knowledge Vault"
-                    }
-                    button {
-                        class: "flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 "
-                            .to_string() + if *active_tab.read() == "logs" {
-                                "bg-indigo-600/20 text-indigo-200 border-l-4 border-indigo-500"
-                            } else {
-                                "hover:bg-slate-800/50 text-slate-400 hover:text-slate-200 border-l-4 border-transparent"
-                            },
-                        onclick: move |_| active_tab.set("logs".to_string()),
-                        span { "📟" }
-                        "Live Logs"
+                        class: "flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all duration-200 hover:bg-slate-800/40 text-slate-400 hover:text-slate-200 border border-slate-800/30 hover:border-slate-700/60 shadow shadow-slate-950/20 active:scale-95 mb-2 cursor-pointer",
+                        onclick: move |_| show_feedback_modal.set(true),
+                        span { "💬" }
+                        "Report Feedback"
                     }
                 }
 
@@ -220,6 +235,7 @@ pub fn App() -> Element {
                     }
                 }
             }
+            FeedbackModal { show_modal: show_feedback_modal }
         }
     }
 }

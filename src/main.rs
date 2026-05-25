@@ -6,7 +6,7 @@ pub mod backend;
 
 pub mod frontend;
 
-use frontend::app::{ProjectInfo, Issue, HealthCheckResult};
+use frontend::app::{ProjectInfo, Issue, HealthCheckResult, FeedbackResponse};
 
 // Server Functions
 #[server]
@@ -88,6 +88,19 @@ async fn create_issue(title: String, body: String) -> Result<(), ServerFnError> 
         });
         backend::issue::save_issues(&issues).map_err(|e| ServerFnError::new(e.to_string()))?;
         Ok(())
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
+}
+
+#[server]
+async fn submit_feedback_fn(raw_text: String) -> Result<FeedbackResponse, ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        backend::issue::create_refined_feedback_issue(raw_text)
+            .map_err(|e| ServerFnError::new(e))
     }
     #[cfg(target_arch = "wasm32")]
     {
