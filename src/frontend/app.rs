@@ -37,6 +37,16 @@ pub enum FeedbackResponse {
     PrefilledUrl { title: String, body: String, url: String },
 }
 
+#[derive(Clone, PartialEq, Debug)]
+pub enum UpgradeProgress {
+    Idle,
+    Downloading,
+    Installing,
+    Restarting,
+    Success,
+    Failed(String),
+}
+
 async fn sleep_ms(ms: u32) {
     #[cfg(target_arch = "wasm32")]
     {
@@ -59,6 +69,7 @@ pub fn App() -> Element {
     let mut daemon_running = use_signal(|| false);
     let mut upgrade_available = use_signal(|| None::<(String, String)>);
     let mut show_feedback_modal = use_signal(|| false);
+    let mut upgrade_progress = use_signal(|| UpgradeProgress::Idle);
 
     // Poll data periodically
     let _fetch_future = use_future(move || async move {
@@ -108,8 +119,23 @@ pub fn App() -> Element {
                             class: "text-[10px] bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/20 px-2.5 py-0.5 rounded-full font-bold animate-pulse active:scale-95 transition-all shadow shadow-indigo-900/40 cursor-pointer",
                             onclick: move |_| {
                                 let url = download_url.clone();
+                                let mut progress = upgrade_progress;
                                 spawn(async move {
-                                    let _ = crate::trigger_remote_upgrade(url).await;
+                                    progress.set(UpgradeProgress::Downloading);
+                                    sleep_ms(500).await;
+                                    progress.set(UpgradeProgress::Installing);
+                                    match crate::trigger_remote_upgrade(url).await {
+                                        Ok(_) => {
+                                            progress.set(UpgradeProgress::Restarting);
+                                            sleep_ms(4000).await;
+                                            progress.set(UpgradeProgress::Success);
+                                            let mut eval_js = document::eval("window.location.reload();");
+                                            let _ = eval_js.recv::<()>().await;
+                                        }
+                                        Err(e) => {
+                                            progress.set(UpgradeProgress::Failed(e.to_string()));
+                                        }
+                                    }
                                 });
                             },
                             "Update to {tag_name} 🚀"
@@ -236,6 +262,60 @@ pub fn App() -> Element {
                 }
             }
             FeedbackModal { show_modal: show_feedback_modal }
+            if *upgrade_progress.read() != UpgradeProgress::Idle {
+                div { class: "fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm transition-all duration-300",
+                    div { class: "w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-6 flex flex-col gap-5 text-center animate-in fade-in-50 zoom-in-95",
+                        match upgrade_progress.read().clone() {
+                            UpgradeProgress::Idle => rsx! { div {} },
+                            UpgradeProgress::Downloading => rsx! {
+                                div { class: "flex flex-col items-center gap-4 py-4",
+                                    div { class: "h-12 w-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" }
+                                    h3 { class: "text-lg font-bold text-slate-100", "패키지 다운로드 중..." }
+                                    p { class: "text-xs text-slate-400 leading-relaxed", "GitHub로부터 최신 릴리즈 압축 패키지를 안전하게 내려받고 있습니다." }
+                                }
+                            },
+                            UpgradeProgress::Installing => rsx! {
+                                div { class: "flex flex-col items-center gap-4 py-4",
+                                    div { class: "h-12 w-12 border-4 border-purple-500 border-t-transparent rounded-full animate-spin" }
+                                    h3 { class: "text-lg font-bold text-slate-100", "업데이트 설치 중..." }
+                                    p { class: "text-xs text-slate-400 leading-relaxed", "바이너리를 백업하고 신규 파일 압축 해제 및 무결성 검사를 수행하는 중입니다." }
+                                }
+                            },
+                            UpgradeProgress::Restarting => rsx! {
+                                div { class: "flex flex-col items-center gap-4 py-4",
+                                    div { class: "h-12 w-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin" }
+                                    h3 { class: "text-lg font-bold text-emerald-400", "대시보드 재기동 중..." }
+                                    p { class: "text-xs text-slate-400 leading-relaxed", "업그레이드가 성공적으로 완료되었습니다! 대시보드 서비스를 다시 로드하고 있습니다. 잠시만 기다려주세요." }
+                                }
+                            },
+                            UpgradeProgress::Success => rsx! {
+                                div { class: "flex flex-col items-center gap-4 py-4",
+                                    span { class: "text-5xl", "🎉" }
+                                    h3 { class: "text-lg font-bold text-emerald-400", "업그레이드 완료!" }
+                                    p { class: "text-xs text-slate-300", "대시보드를 새로고침합니다..." }
+                                }
+                            },
+                            UpgradeProgress::Failed(err) => rsx! {
+                                div { class: "flex flex-col gap-4 py-2",
+                                    span { class: "text-5xl", "⚠️" }
+                                    h3 { class: "text-lg font-bold text-rose-400", "업그레이드 실패" }
+                                    div { class: "bg-slate-950/60 border border-slate-800/80 rounded-xl p-3.5 text-left max-h-[150px] overflow-y-auto scrollbar-thin scrollbar-thumb-slate-800",
+                                        p { class: "text-xs text-rose-300 font-mono whitespace-pre-wrap leading-relaxed", "{err}" }
+                                    }
+                                    p { class: "text-[11px] text-slate-500 leading-relaxed", "시스템이 이전 안전 상태로 자동 롤백되었습니다. 필요한 경우 CLI를 통해 수동으로 복구해 주세요." }
+                                    div { class: "flex justify-end gap-3 mt-4 border-t border-slate-800 pt-4",
+                                        button {
+                                            class: "px-4 py-2 text-xs font-semibold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700/80 transition-all",
+                                            onclick: move |_| upgrade_progress.set(UpgradeProgress::Idle),
+                                            "확인"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
