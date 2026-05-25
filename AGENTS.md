@@ -48,3 +48,7 @@ Whenever you complete an issue resolution or change:
   ```bash
   agy-orchestrator update-memory --topic "<topic>" --content "<markdown>"
   ```
+* **Local Dashboard Development**: To run the Dioxus dashboard locally, use Dioxus CLI (`dx serve` / `dx build`). Do not run raw `cargo run -- dashboard` because `default = ["web"]` will cause a native startup panic. If you must run via cargo directly, use:
+  ```bash
+  cargo run --no-default-features --features server -- dashboard
+  ```
