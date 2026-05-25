@@ -15,3 +15,28 @@ We have upgraded the visual and usability aspects of the dashboard chat assistan
 ## Verification
 - Code successfully passes Clippy warnings (`-D warnings`) and tests.
 
+
+
+# 📅 History log from 2026-05-26 07:53:24 (Spawned at 2026-05-25T23:15:48+09:00)
+
+# Completion Report: Chat Session Persistence & Tab-Switching Bug Fix
+
+## Changes Implemented
+
+1. **Frontend State Management (`src/frontend/app.rs`)**:
+   - Lifted the chat history state (`chat_messages`) to the root `App` component so it is preserved when switching tabs.
+   - Removed the wasteful 3-second background polling of chat history to eliminate race conditions and UI flickering.
+   - Initialized history once on page mount and refreshed it on demand when clicking the "Chat Assistant" tab.
+
+2. **History Parsing & Sanitization (`src/main.rs`)**:
+   - Switched from `transcript.jsonl` to `transcript_full.jsonl` to prevent displaying truncated message content.
+   - Corrected JSON key tracking from `timestamp` to `created_at` for accurate timing indicators.
+   - Extracted user prompts from system prompts and metadata wrappers in transcript logs to keep chat bubbles clean.
+
+3. **Compilation Enhancements (`src/backend/upgrade.rs`)**:
+   - Fixed the `self-upgrade` tool to build native binaries using `--no-default-features --features server` to avoid runtime panics on non-wasm targets.
+
+4. **Evolution Harness and Deployment**:
+   - Verified changes via evolution-harness, auto-committed, and pushed to remote branch.
+   - Successfully compiled the release binary, installed it, restarted the daemon service via systemd, and launched the upgraded dashboard (PID: 419244).
+

@@ -122,10 +122,13 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
     }
     fs::copy(&current_exe, &backup_exe)?;
 
-    println!("Compiling release binary via 'cargo build --release'...");
+    println!("Compiling release binary via 'cargo build --release --no-default-features --features server'...");
     let build_status = Command::new("cargo")
         .arg("build")
         .arg("--release")
+        .arg("--no-default-features")
+        .arg("--features")
+        .arg("server")
         .current_dir(&workspace_root)
         .status()?;
 
