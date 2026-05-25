@@ -3,20 +3,25 @@
 JIT Memory Agent Orchestrator & Knowledge Vault for AI coding assistants.
 
 ## Architecture Overview
-- **Backend (Rust)**: Manages background monitoring daemon, CLI subcommands, health checks, self-upgrades, and evolution issues.
-- **Frontend (Dioxus)**: Web-based fullstack dashboard serving projects state, logs, issues, and configuration.
-- **Persistent Service**: Automatically configured via standard `systemd` user service (`agy-orchestrator.service`) during installation.
-- **Self-Evolution**: Active git developer workspaces can spawn evolution tasks, self-verify using Clippy/cargo-test harness, and auto-release.
+- **Backend (Rust)**: CLI subcommands (`src/backend/commands/`), background daemon, health checks, and self-evolution safety harness.
+- **Frontend (Dioxus)**: Fullstack dashboard displaying projects state, logs, tasks, vault, and interactive chat secretary.
+- **Persistent Service**: Configured via systemd user service (`agy-orchestrator.service`).
 
-## System CLI State (v0.1.25)
-- **Daemon Loop**: Handles process status, auto-consolidation of reports, log auto-compression, issues execution, and GitHub version checks.
-- **Upgrade Process**: Automatically downloads, extracts, and deploys `tar.gz` package containing binary and frontend `public` assets, restarts the systemd service smoothly, and auto-closes resolved remote GitHub issues using the `GITHUB_TOKEN`.
-- **Upgrade Diagnostics**: Displays real-time visual progress monitoring (downloading, installing, restarting) and error diagnostics in the dashboard modal with automatic browser reload on success.
-- **Dashboard Support**: Detects active dashboard status (PID/Port) and automatically spawns a new upgraded instance using the stable binary installation path ($HOME/.local/bin/agy-orchestrator) to prevent unlinked path failures on Linux, terminating the old one seamlessly during remote updates.
-- **Info Command**: Reports Version, Execution Mode, Daemon Status (with PID), and Dashboard Status (with PID and Port).
-- **Modular Subcommands**: Single-responsibility Rust commands under `src/backend/commands/` managed via entrypoint routing in `mod.rs`.
-- **Interactive Kanban Board**: Allows triggering self-evolution harness (`run_evolution_harness_fn`) and manual resolution (`resolve_issue_fn`) directly from the web client, piping harness output to `Live Logs`.
-- **Modular Frontend**: Exposes individual component tabs under `src/frontend/components/` for projects, issues, vault, logs, and chat assistant, improving AI readability and clean code structure.
-- **GitHub Issues Integration**: Syncs remote open issues labeled `evolution` into local `issues.json` automatically via daemon polling or manually via `issue --sync` CLI flag.
-- **Chat Assistant**: Conversational Dioxus tab integrated with the local agy CLI using active session tracking and auto-permission-override options to prevent interactive prompt hangs, directing the local agent to query the system and vault dynamically using JIT commands (like agy-orchestrator info, list, issue, query-memory) for real-time awareness and automated task creation.
+## System Features
+- **Daemon Loop**: Handles status monitoring, report consolidation, log compression, task running, and updates.
+- **OTA Self-Upgrade**: Downloads and extracts releases, restarts systemd service, and spawns the upgraded dashboard seamlessly.
+- **Evolution Harness**: Validates edits against static integrity gates, clippy warnings (`-D warnings`), and test suites before committing/resolving issues.
+- **Premium Chat Assistant**: Glassmorphic, highly polished UI tab integrated with `agy` CLI using session tracking. Supports:
+  - Custom pure-Rust Markdown & code block parser/renderer with interactive copy buttons.
+  - Quick action chips for JIT system queries (info, list, issues, create task).
+  - Header controls to reset conversation sessions.
 
+## Project Playbook (AGENTS.md)
+Rules for AI developers:
+1. Run Clippy & tests via `agy-orchestrator evolution-harness` to verify logic.
+2. Separate CLI subcommands into [src/backend/commands/](file:///home/wimvm/works/agy_orchestrator/src/backend/commands/).
+3. Do not drop comments or simplify documentation.
+
+## TODO / Future Work
+- `[ ]` Add real-time log streaming for active projects in dashboard.
+- `[ ]` Support multiple registered developers/workspaces simultaneously.
