@@ -320,7 +320,7 @@ async fn get_chat_history(session_id: String) -> Result<Vec<crate::frontend::app
     #[cfg(not(target_arch = "wasm32"))]
     {
         use crate::frontend::app::ChatMessage;
-        if session_id.is_empty() {
+        if session_id.is_empty() || session_id.starts_with("draft-") {
             return Ok(Vec::new());
         }
 
@@ -411,7 +411,8 @@ async fn get_chat_sessions() -> Result<Vec<crate::frontend::app::ChatSession>, S
 async fn create_chat_session() -> Result<String, ServerFnError> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let id = uuid_v4_fallback();
+        let ts = chrono::Utc::now().timestamp_millis();
+        let id = format!("draft-{}", ts);
         let timestamp = chrono::Local::now().to_rfc3339();
         let new_session = crate::frontend::app::ChatSession {
             id: id.clone(),
@@ -423,8 +424,6 @@ async fn create_chat_session() -> Result<String, ServerFnError> {
         let mut sessions = load_chat_sessions().unwrap_or_default();
         sessions.push(new_session);
         save_chat_sessions(&sessions).map_err(|e| ServerFnError::new(e))?;
-        let brain_dir = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(&id);
-        let _ = std::fs::create_dir_all(&brain_dir);
         
         let base_dir = backend::vault::get_base_dir();
         let _ = std::fs::write(base_dir.join("active_chat_session_id.txt"), &id);
@@ -699,24 +698,66 @@ async fn send_chat_message(session_id: String, message: String) -> Result<String
             msg_trimmed
         );
 
+        let is_draft = session_id.starts_with("draft-");
         let mut cmd = std::process::Command::new("/home/wimvm/.local/bin/agy");
         cmd.arg("--prompt").arg(&prompt_payload);
         cmd.arg("--dangerously-skip-permissions");
-        cmd.arg("--conversation").arg(&session_id);
 
-        let brain_dir = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(&session_id);
-        let transcript_path = brain_dir.join(".system_generated/logs/transcript_full.jsonl");
-        if transcript_path.exists() {
-            cmd.arg("--continue");
+        if !is_draft {
+            cmd.arg("--conversation").arg(&session_id);
+            let brain_dir = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(&session_id);
+            let transcript_path = brain_dir.join(".system_generated/logs/transcript_full.jsonl");
+            if transcript_path.exists() {
+                cmd.arg("--continue");
+            }
         }
 
         let output = cmd.output();
 
         match output {
             Ok(out) if out.status.success() => {
-                let _ = check_and_rename_session(&session_id, msg_trimmed);
+                let actual_session_id = if is_draft {
+                    if let Ok(path_output) = std::process::Command::new("sh")
+                        .arg("-c")
+                        .arg("ls -td /home/wimvm/.gemini/antigravity-cli/brain/*/ | head -n 1")
+                        .output()
+                    {
+                        if path_output.status.success() {
+                            let path_str = String::from_utf8_lossy(&path_output.stdout).trim().to_string();
+                            if !path_str.is_empty() {
+                                if let Some(filename) = std::path::Path::new(&path_str).file_name() {
+                                    let new_id = filename.to_string_lossy().into_owned();
+                                    
+                                    if let Ok(mut sessions) = load_chat_sessions() {
+                                        if let Some(session) = sessions.iter_mut().find(|s| s.id == session_id) {
+                                            session.id = new_id.clone();
+                                        }
+                                        let _ = save_chat_sessions(&sessions);
+                                    }
+                                    
+                                    let base_dir = backend::vault::get_base_dir();
+                                    let _ = std::fs::write(base_dir.join("active_chat_session_id.txt"), &new_id);
 
-                match get_transcript_content_by_id(&session_id) {
+                                    new_id
+                                } else {
+                                    session_id.clone()
+                                }
+                            } else {
+                                session_id.clone()
+                            }
+                        } else {
+                            session_id.clone()
+                        }
+                    } else {
+                        session_id.clone()
+                    }
+                } else {
+                    session_id.clone()
+                };
+
+                let _ = check_and_rename_session(&actual_session_id, msg_trimmed);
+
+                match get_transcript_content_by_id(&actual_session_id) {
                     Ok(clean_reply) => {
                         let mut final_response = clean_reply;
 
@@ -844,6 +885,79 @@ mod tests {
     fn test_evolution_comment() {
         let content = std::fs::read_to_string("src/main.rs").expect("Failed to read src/main.rs");
         assert!(content.contains("// Evolution verified!"));
+    }
+
+    #[tokio::test]
+    async fn test_multi_session_chat() {
+        #[cfg(feature = "server")]
+        {
+            // 1. Create two separate sessions
+            let id_1 = create_chat_session().await.expect("Failed to create session 1");
+            let id_2 = create_chat_session().await.expect("Failed to create session 2");
+            
+            assert_ne!(id_1, id_2);
+
+            // 2. Write mock history files directly to isolate them and avoid slow LLM integration calls
+            let brain_dir_1 = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(&id_1);
+            let logs_dir_1 = brain_dir_1.join(".system_generated/logs");
+            std::fs::create_dir_all(&logs_dir_1).expect("Failed to create logs dir 1");
+            let transcript_path_1 = logs_dir_1.join("transcript_full.jsonl");
+            let mock_data_1 = r#"{"source":"USER_EXPLICIT","type":"USER_INPUT","content":"Hello from Room 1","created_at":"2026-05-26T08:33:59+09:00"}
+{"source":"MODEL","type":"PLANNER_RESPONSE","content":"Hi there! I am Room 1 assistant.","created_at":"2026-05-26T08:34:05+09:00"}
+"#;
+            std::fs::write(&transcript_path_1, mock_data_1).expect("Failed to write mock transcript 1");
+
+            let brain_dir_2 = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(&id_2);
+            let logs_dir_2 = brain_dir_2.join(".system_generated/logs");
+            std::fs::create_dir_all(&logs_dir_2).expect("Failed to create logs dir 2");
+            let transcript_path_2 = logs_dir_2.join("transcript_full.jsonl");
+            let mock_data_2 = r#"{"source":"USER_EXPLICIT","type":"USER_INPUT","content":"Hello from Room 2","created_at":"2026-05-26T08:33:59+09:00"}
+{"source":"MODEL","type":"PLANNER_RESPONSE","content":"Hi there! I am Room 2 assistant.","created_at":"2026-05-26T08:34:05+09:00"}
+"#;
+            std::fs::write(&transcript_path_2, mock_data_2).expect("Failed to write mock transcript 2");
+            assert!(id_1.starts_with("draft-"));
+            assert!(id_2.starts_with("draft-"));
+
+            // 2. Send messages to both sessions (which will transition them to actual UUIDs)
+            let reply_1 = send_chat_message(id_1.clone(), "Hello from Room 1".to_string()).await.expect("Failed to send message to Room 1");
+            let reply_2 = send_chat_message(id_2.clone(), "Hello from Room 2".to_string()).await.expect("Failed to send message to Room 2");
+
+            assert!(!reply_1.is_empty());
+            assert!(!reply_2.is_empty());
+
+            // 3. Verify they are transitioned to UUIDs and stored
+            let sessions = get_chat_sessions().await.expect("Failed to get chat sessions");
+            
+            // The drafts should not exist anymore in the list
+            assert!(!sessions.iter().any(|s| s.id == id_1));
+            assert!(!sessions.iter().any(|s| s.id == id_2));
+
+            // But we should find the rooms with the correct titles
+            let s1_opt = sessions.iter().find(|s| s.title == "Hello from Room 1");
+            let s2_opt = sessions.iter().find(|s| s.title == "Hello from Room 2");
+
+            assert!(s1_opt.is_some());
+            assert!(s2_opt.is_some());
+
+            let real_id_1 = s1_opt.unwrap().id.clone();
+            let real_id_2 = s2_opt.unwrap().id.clone();
+
+            // 4. Verify histories are isolated
+            let history_1 = get_chat_history(real_id_1.clone()).await.expect("Failed to get history for Room 1");
+            let history_2 = get_chat_history(real_id_2.clone()).await.expect("Failed to get history for Room 2");
+
+            // Session 1 should contain Room 1 message, but NOT Room 2 message
+            assert!(history_1.iter().any(|m| m.text.contains("Hello from Room 1")));
+            assert!(!history_1.iter().any(|m| m.text.contains("Hello from Room 2")));
+
+            // Session 2 should contain Room 2 message, but NOT Room 1 message
+            assert!(history_2.iter().any(|m| m.text.contains("Hello from Room 2")));
+            assert!(!history_2.iter().any(|m| m.text.contains("Hello from Room 1")));
+
+            // 5. Delete both sessions and clean up
+            delete_chat_session(real_id_1.clone()).await.expect("Failed to delete session 1");
+            delete_chat_session(real_id_2.clone()).await.expect("Failed to delete session 2");
+        }
     }
 }
 
