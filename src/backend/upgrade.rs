@@ -34,6 +34,9 @@ pub fn restart_daemon_process(current_exe: &Path) -> io::Result<()> {
     let start_status = Command::new(current_exe)
         .arg("daemon")
         .arg("--start")
+        .env_remove("PORT")
+        .env_remove("ADDR")
+        .env_remove("DIOXUS_ACTIVE")
         .status()?;
     if !start_status.success() {
         return Err(io::Error::other("Failed to launch daemon in background"));
@@ -194,6 +197,9 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
         let stop_status = Command::new(&backup_exe)
             .arg("daemon")
             .arg("--stop")
+            .env_remove("PORT")
+            .env_remove("ADDR")
+            .env_remove("DIOXUS_ACTIVE")
             .status()?;
         if !stop_status.success() {
             eprintln!("Warning: Failed to cleanly stop old daemon process.");
@@ -436,6 +442,9 @@ pub fn run_remote_upgrade(download_url: &str) -> io::Result<()> {
         let stop_status = Command::new(&backup_exe)
             .arg("daemon")
             .arg("--stop")
+            .env_remove("PORT")
+            .env_remove("ADDR")
+            .env_remove("DIOXUS_ACTIVE")
             .status()?;
         if !stop_status.success() {
             eprintln!("Warning: Failed to cleanly stop old daemon process.");
