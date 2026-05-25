@@ -386,8 +386,9 @@ fn main() -> std::io::Result<()> {
             match backend::cli::run_cli(cli_cmd)? {
                 backend::cli::CliResult::Exit => Ok(()),
                 backend::cli::CliResult::StartDashboard { port } => {
-                    // Set port in environment so dioxus can find it
+                    // Set port and address in environment so dioxus can find it
                     std::env::set_var("PORT", port.to_string());
+                    std::env::set_var("ADDR", "0.0.0.0");
                     dioxus::launch(frontend::App);
                     Ok(())
                 }
