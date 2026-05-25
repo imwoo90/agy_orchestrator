@@ -423,6 +423,8 @@ async fn create_chat_session() -> Result<String, ServerFnError> {
         let mut sessions = load_chat_sessions().unwrap_or_default();
         sessions.push(new_session);
         save_chat_sessions(&sessions).map_err(|e| ServerFnError::new(e))?;
+        let brain_dir = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(&id);
+        let _ = std::fs::create_dir_all(&brain_dir);
         
         let base_dir = backend::vault::get_base_dir();
         let _ = std::fs::write(base_dir.join("active_chat_session_id.txt"), &id);
@@ -703,7 +705,8 @@ async fn send_chat_message(session_id: String, message: String) -> Result<String
         cmd.arg("--conversation").arg(&session_id);
 
         let brain_dir = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(&session_id);
-        if brain_dir.exists() {
+        let transcript_path = brain_dir.join(".system_generated/logs/transcript_full.jsonl");
+        if transcript_path.exists() {
             cmd.arg("--continue");
         }
 
