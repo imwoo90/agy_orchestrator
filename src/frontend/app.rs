@@ -135,7 +135,7 @@ pub fn App() -> Element {
                         "AGY Orchestrator Dashboard"
                     }
                     span { class: "text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded-md font-mono font-semibold",
-                        "v{env!(\"CARGO_PKG_VERSION\")}"
+                        "v{env!(\"AGY_ORCHESTRATOR_VERSION\")}"
                     }
                     if let Some((tag_name, download_url)) = upgrade_available.read().clone() {
                         button {

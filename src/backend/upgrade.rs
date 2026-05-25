@@ -114,26 +114,38 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
 
     let current_exe = get_active_current_exe()?;
     let backup_exe = current_exe.with_extension("bak");
-    let new_exe = workspace_root.join("target/release/agy-orchestrator");
+    let new_exe = workspace_root.join("target/dx/agy-orchestrator/release/web/server");
+    let new_public = workspace_root.join("target/dx/agy-orchestrator/release/web/public");
 
-    println!("Backing up active binary to {}...", backup_exe.display());
+    let parent_dir = current_exe.parent().ok_or_else(|| io::Error::other("No parent directory for binary"))?;
+    let active_public = parent_dir.join("public");
+    let backup_public = parent_dir.join("public.bak");
+
+    println!("Backing up active binary and assets...");
     if backup_exe.exists() {
         fs::remove_file(&backup_exe)?;
     }
     fs::copy(&current_exe, &backup_exe)?;
 
-    println!("Compiling release binary via 'cargo build --release --no-default-features --features server'...");
-    let build_status = Command::new("cargo")
+    if active_public.exists() {
+        if backup_public.exists() {
+            fs::remove_dir_all(&backup_public)?;
+        }
+        let _ = fs::rename(&active_public, &backup_public);
+    }
+
+    println!("Compiling release binary and assets via 'dx build --release'...");
+    let build_status = Command::new("dx")
         .arg("build")
         .arg("--release")
-        .arg("--no-default-features")
-        .arg("--features")
-        .arg("server")
         .current_dir(&workspace_root)
         .status()?;
 
     if !build_status.success() {
         let _ = fs::remove_file(&backup_exe);
+        if backup_public.exists() {
+            let _ = fs::rename(&backup_public, &active_public);
+        }
         if let Some(issue_id) = resolve_issue {
             let mut issues = load_issues();
             if let Some(issue) = issues.iter_mut().find(|i| i.id == issue_id) {
@@ -150,7 +162,7 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
     println!("Compilation completed successfully!");
 
     if current_exe != new_exe {
-        println!("Installing upgraded binary...");
+        println!("Installing upgraded binary and assets...");
         let old_exe = current_exe.with_extension("old");
         if old_exe.exists() {
             fs::remove_file(&old_exe)?;
@@ -160,6 +172,10 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
             eprintln!("Failed to copy upgraded binary: {}", e);
             println!("Restoring stable backup...");
             let _ = fs::rename(&old_exe, &current_exe);
+            if backup_public.exists() {
+                let _ = fs::remove_dir_all(&active_public);
+                let _ = fs::rename(&backup_public, &active_public);
+            }
             let _ = fs::remove_file(&backup_exe);
             if let Some(issue_id) = resolve_issue {
                 let mut issues = load_issues();
@@ -172,13 +188,39 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
             }
             return Err(e);
         }
+
+        if new_public.exists() {
+            if active_public.exists() {
+                let _ = fs::remove_dir_all(&active_public);
+            }
+            if let Err(e) = fs::create_dir_all(&active_public) {
+                eprintln!("Failed to create public directory: {}", e);
+            }
+            let copy_status = Command::new("cp")
+                .arg("-r")
+                .arg(format!("{}/.", new_public.to_string_lossy()))
+                .arg(&active_public)
+                .status();
+            if let Err(e) = copy_status {
+                eprintln!("Failed to copy public assets: {}", e);
+            }
+        }
+
         let _ = fs::remove_file(&old_exe);
+    }
+
+    if backup_public.exists() {
+        let _ = fs::remove_dir_all(&backup_public);
     }
 
     let daemon_was_running = is_daemon_running();
     let old_pid = get_daemon_pid();
 
     let rollback_and_fail_issue = |reason: &str| -> io::Result<()> {
+        if backup_public.exists() {
+            let _ = fs::remove_dir_all(&active_public);
+            let _ = fs::rename(&backup_public, &active_public);
+        }
         if let Some(issue_id) = resolve_issue {
             let mut issues = load_issues();
             if let Some(issue) = issues.iter_mut().find(|i| i.id == issue_id) {
@@ -302,8 +344,9 @@ pub fn check_latest_release() -> io::Result<Option<(String, String)>> {
         None => return Ok(None),
     };
 
-    let current_version = format!("v{}", env!("CARGO_PKG_VERSION"));
-    if tag_name == current_version {
+    let current_version = format!("v{}", env!("AGY_ORCHESTRATOR_VERSION"));
+    let cmp_version = current_version.replace("-dev", "");
+    if tag_name == cmp_version {
         return Ok(None);
     }
 

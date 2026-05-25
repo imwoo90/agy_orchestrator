@@ -421,7 +421,7 @@ pub fn get_active_dashboard_info() -> Option<(u32, u16)> {
 
 pub fn print_info() -> io::Result<()> {
     let current_exe = std::env::current_exe()?;
-    let version = env!("CARGO_PKG_VERSION");
+    let version = env!("AGY_ORCHESTRATOR_VERSION");
     let base_dir = get_base_dir();
     
     let is_dev_mode = crate::backend::health::find_workspace_root().is_ok();
