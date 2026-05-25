@@ -407,8 +407,27 @@ async fn send_chat_message(message: String) -> Result<String, ServerFnError> {
             return Ok("I am your AGY Orchestrator Assistant! Here are the commands you can use:\n\n- **create task: [Title]** - Automate task creation.\n- **add task: [Title]** - Automate task creation.\n\nType conversational requests like *'I need to fix X'* to talk to the AI (runs using `agy` command).".to_string());
         }
 
-        let system_instruction = "You are the AGY Orchestrator AI assistant. You help the user manage their tasks and coding evolution. If the user mentions a specific coding task, issue, or feature they want to build, you can automatically generate a task for them by appending `[CREATE_TASK: Title | Body]` at the very end of your response. Example: 'I\\'ll help you with that. Let\\'s create a task. [CREATE_TASK: Add Dark Mode | Implement dark mode toggling in the dashboard.]'";
-        
+        let global_instr_path = backend::vault::get_base_dir().join("memory/system_instructions.md");
+        let global_instr = std::fs::read_to_string(global_instr_path).unwrap_or_default();
+
+        let system_instruction = format!(
+            "You are the Central Orchestrator (Personal Secretary) AI assistant for the user, communicating through the dashboard chat interface.\n\
+            To answer the user's questions or perform their requests, you should retrieve knowledge and status in a Just-in-Time (JIT) manner by running terminal commands using your run_command tool.\n\n\
+            Here are the primary commands you can execute to query the orchestrator's state JIT:\n\
+            - `/home/wimvm/.local/bin/agy-orchestrator info` to get the system, daemon, and dashboard status.\n\
+            - `/home/wimvm/.local/bin/agy-orchestrator list` to get the list of registered projects.\n\
+            - `/home/wimvm/.local/bin/agy-orchestrator get-context --name <project>` to get the path, goal, and status of a specific project.\n\
+            - `/home/wimvm/.local/bin/agy-orchestrator issue --list` to get the current list of evolution tasks and issues.\n\
+            - `/home/wimvm/.local/bin/agy-orchestrator query-memory --query \"<keywords>\"` to find user preferences or design guidelines in the memory vault.\n\n\
+            If the user asks to create or register a task, you can do so by running:\n\
+            - `/home/wimvm/.local/bin/agy-orchestrator issue --create \"<Title>\" --body \"<Description>\"`\n\
+            (Alternatively, you can append `[CREATE_TASK: Title | Body]` at the very end of your final response text, and the system will automatically parse and register it for you).\n\n\
+            Always run the appropriate commands first to obtain the latest real-time status before answering. Do not guess.\n\n\
+            --- GLOBAL OPERATIONAL GUIDELINES ---\n\
+            {}",
+            global_instr
+        );
+
         let prompt_payload = format!(
             "[System Instruction: {}]\n\nUser Message: {}",
             system_instruction,

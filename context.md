@@ -8,7 +8,7 @@ JIT Memory Agent Orchestrator & Knowledge Vault for AI coding assistants.
 - **Persistent Service**: Automatically configured via standard `systemd` user service (`agy-orchestrator.service`) during installation.
 - **Self-Evolution**: Active git developer workspaces can spawn evolution tasks, self-verify using Clippy/cargo-test harness, and auto-release.
 
-## System CLI State (v0.1.20)
+## System CLI State (v0.1.23)
 - **Daemon Loop**: Handles process status, auto-consolidation of reports, log auto-compression, issues execution, and GitHub version checks.
 - **Upgrade Process**: Automatically downloads, extracts, and deploys `tar.gz` package containing binary and frontend `public` assets, restarts the systemd service smoothly, and auto-closes resolved remote GitHub issues using the `GITHUB_TOKEN`.
 - **Upgrade Diagnostics**: Displays real-time visual progress monitoring (downloading, installing, restarting) and error diagnostics in the dashboard modal with automatic browser reload on success.
@@ -18,5 +18,5 @@ JIT Memory Agent Orchestrator & Knowledge Vault for AI coding assistants.
 - **Interactive Kanban Board**: Allows triggering self-evolution harness (`run_evolution_harness_fn`) and manual resolution (`resolve_issue_fn`) directly from the web client, piping harness output to `Live Logs`.
 - **Modular Frontend**: Exposes individual component tabs under `src/frontend/components/` for projects, issues, vault, logs, and chat assistant, improving AI readability and clean code structure.
 - **GitHub Issues Integration**: Syncs remote open issues labeled `evolution` into local `issues.json` automatically via daemon polling or manually via `issue --sync` CLI flag.
-- **Chat Assistant**: Conversational Dioxus tab integrated with rule-based task shortcuts and Google Gemini API (via curl subprocess) for automated task parsing and extraction (`[CREATE_TASK: Title | Body]`).
+- **Chat Assistant**: Conversational Dioxus tab integrated with the local agy CLI and transcript log parsing, directing the local agent to query the system and vault dynamically using JIT commands (like agy-orchestrator info, list, issue, query-memory) for real-time awareness and automated task creation.
 
