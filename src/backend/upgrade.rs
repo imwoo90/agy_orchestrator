@@ -25,6 +25,70 @@ pub fn get_active_current_exe() -> io::Result<PathBuf> {
     Ok(current_exe)
 }
 
+pub fn restart_dashboard_process(current_exe: &Path) -> io::Result<()> {
+    let mut dashboard_pid = None;
+    let mut port = 8080;
+
+    if let Ok(entries) = std::fs::read_dir("/proc") {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(filename) = path.file_name() {
+                let name_str = filename.to_string_lossy();
+                if name_str.chars().all(|c| c.is_ascii_digit()) {
+                    let cmdline_path = path.join("cmdline");
+                    if let Ok(cmdline) = std::fs::read_to_string(&cmdline_path) {
+                        if cmdline.contains("agy-orchestrator") && cmdline.contains("dashboard") {
+                            if let Ok(pid) = name_str.parse::<u32>() {
+                                dashboard_pid = Some(pid);
+                                let parts: Vec<&str> = cmdline.split('\0').collect();
+                                for (i, part) in parts.iter().enumerate() {
+                                    if (*part == "--port" || *part == "-p") && i + 1 < parts.len() {
+                                        if let Ok(p) = parts[i + 1].parse::<u16>() {
+                                            port = p;
+                                        }
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(pid) = dashboard_pid {
+        println!("Stopping running dashboard (PID: {})...", pid);
+        let _ = Command::new("kill").arg(pid.to_string()).status();
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+
+    println!("Starting upgraded dashboard on port {}...", port);
+    let mut cmd = Command::new(current_exe);
+    cmd.arg("dashboard").arg("--port").arg(port.to_string());
+    cmd.env_remove("PORT")
+        .env_remove("ADDR")
+        .env_remove("IP")
+        .env_remove("DIOXUS_ACTIVE");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        extern "C" {
+            fn setsid() -> i32;
+        }
+        unsafe {
+            cmd.pre_exec(|| {
+                setsid();
+                Ok(())
+            });
+        }
+    }
+
+    let _ = cmd.spawn()?;
+    Ok(())
+}
+
 pub fn restart_daemon_process(current_exe: &Path) -> io::Result<()> {
     let service_file = get_base_dir().parent().unwrap_or(&PathBuf::from("/home/wimvm")).join(".config/systemd/user/agy-orchestrator.service");
     if service_file.exists() {
@@ -309,6 +373,7 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
         }
     }
 
+    let _ = restart_dashboard_process(&current_exe);
     println!("Successfully upgraded to the new version!");
     Ok(())
 }
@@ -541,6 +606,7 @@ pub fn run_remote_upgrade(download_url: &str) -> io::Result<()> {
         let _ = fs::remove_file(&backup_exe);
     }
 
+    let _ = restart_dashboard_process(&current_exe);
     println!("Successfully upgraded to the new release!");
     Ok(())
 }
