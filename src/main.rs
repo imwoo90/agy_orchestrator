@@ -272,10 +272,19 @@ async fn trigger_remote_upgrade(download_url: String) -> Result<(), ServerFnErro
         tokio::spawn(async {
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             
-            if let Ok(current_exe) = std::env::current_exe() {
-                let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
-                let mut cmd = std::process::Command::new(&current_exe);
-                cmd.arg("dashboard").arg("--port").arg(&port);
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/home/wimvm".to_string());
+            let stable_exe = std::path::PathBuf::from(home).join(".local/bin/agy-orchestrator");
+            let spawn_exe = if stable_exe.exists() {
+                stable_exe
+            } else if let Ok(curr) = std::env::current_exe() {
+                curr
+            } else {
+                std::process::exit(0);
+            };
+
+            let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
+            let mut cmd = std::process::Command::new(&spawn_exe);
+            cmd.arg("dashboard").arg("--port").arg(&port);
                 
                 #[cfg(unix)]
                 {
@@ -292,8 +301,6 @@ async fn trigger_remote_upgrade(download_url: String) -> Result<(), ServerFnErro
                 }
                 
                 let _ = cmd.spawn();
-            }
-            
             std::process::exit(0);
         });
         
