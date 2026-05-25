@@ -9,7 +9,7 @@ JIT Memory Agent Orchestrator & Knowledge Vault for AI coding assistants.
 
 ## System Features
 - **Daemon Loop**: Handles status monitoring, report consolidation, log compression, task running, and updates.
-- **OTA Self-Upgrade**: Downloads and extracts releases, restarts systemd service, and spawns the upgraded dashboard seamlessly.
+- **OTA Self-Upgrade**: Downloads and extracts releases, restarts systemd service, and spawns the upgraded dashboard seamlessly using stable binary path fallbacks when unlinked.
 - **Evolution Harness**: Validates edits against static integrity gates, clippy warnings (`-D warnings`), and test suites before committing/resolving issues.
 - **Premium Chat Assistant**: Glassmorphic, highly polished UI tab integrated with `agy` CLI using session tracking. Supports:
   - Custom pure-Rust Markdown & code block parser/renderer with interactive copy buttons.
