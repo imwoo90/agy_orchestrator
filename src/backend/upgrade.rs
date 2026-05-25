@@ -175,6 +175,9 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
     println!("Performing sanity checks on the new binary...");
     let sanity_status = Command::new(&current_exe)
         .arg("--help")
+        .env_remove("PORT")
+        .env_remove("ADDR")
+        .env_remove("DIOXUS_ACTIVE")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
@@ -345,6 +348,9 @@ pub fn run_remote_upgrade(download_url: &str) -> io::Result<()> {
     println!("Performing sanity checks on the downloaded binary...");
     let sanity_status = Command::new(&temp_exe)
         .arg("--help")
+        .env_remove("PORT")
+        .env_remove("ADDR")
+        .env_remove("DIOXUS_ACTIVE")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();

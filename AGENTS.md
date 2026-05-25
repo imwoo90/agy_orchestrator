@@ -12,9 +12,9 @@ Before performing any edit or analyzing files, you must run this initial diagnos
 3. **Initialize Instructions**: Read the following paths to load instruction rules:
    * **Static instructions**: [~/.agy_orchestrator/memory/system_instructions.md](file:///home/wimvm/.agy_orchestrator/memory/system_instructions.md)
    * **Dynamic habits/preferences**: Search Obsidian-style vault files in `~/.agy_orchestrator/memory/vault/` based on user-prompt keywords.
-4. **On-Demand Context Loading**: Do not read the entire workspace directory structure. Query specific projects when asked:
-   * Run: `agy-orchestrator get-context --name <project_name>`
-   * Read the returned `<project_path>/context.md` file.
+4. **On-Demand Context Loading**: For this workspace, the registered project name is `agy_orchestrator`. Load its active hot memory context:
+   * Run: `agy-orchestrator get-context --name agy_orchestrator`
+   * Read the returned `/home/wimvm/works/agy_orchestrator/context.md` file.
 
 ---
 
