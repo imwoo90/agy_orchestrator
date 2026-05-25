@@ -12,6 +12,19 @@ use super::health::{find_workspace_root};
 use super::vault::get_base_dir;
 use std::path::PathBuf;
 
+pub fn get_active_current_exe() -> io::Result<PathBuf> {
+    let current_exe = std::env::current_exe()?;
+    let path_str = current_exe.to_string_lossy();
+    if path_str.ends_with(" (deleted)") || !current_exe.exists() {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/home/wimvm".to_string());
+        let stable_exe = PathBuf::from(home).join(".local/bin/agy-orchestrator");
+        if stable_exe.exists() {
+            return Ok(stable_exe);
+        }
+    }
+    Ok(current_exe)
+}
+
 pub fn restart_daemon_process(current_exe: &Path) -> io::Result<()> {
     let service_file = get_base_dir().parent().unwrap_or(&PathBuf::from("/home/wimvm")).join(".config/systemd/user/agy-orchestrator.service");
     if service_file.exists() {
@@ -99,7 +112,7 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
     }
     println!("Tests passed successfully!");
 
-    let current_exe = std::env::current_exe()?;
+    let current_exe = get_active_current_exe()?;
     let backup_exe = current_exe.with_extension("bak");
     let new_exe = workspace_root.join("target/release/agy-orchestrator");
 
@@ -300,7 +313,7 @@ pub fn check_latest_release() -> io::Result<Option<(String, String)>> {
 }
 
 pub fn run_remote_upgrade(download_url: &str) -> io::Result<()> {
-    let current_exe = std::env::current_exe()?;
+    let current_exe = get_active_current_exe()?;
     let parent_dir = current_exe.parent().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Parent directory of current exe not found"))?;
     
     let temp_tar = parent_dir.join("agy-orchestrator-new.tar.gz");
