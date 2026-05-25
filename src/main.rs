@@ -407,76 +407,30 @@ async fn send_chat_message(message: String) -> Result<String, ServerFnError> {
             return Ok("I am your AGY Orchestrator Assistant! Here are the commands you can use:\n\n- **create task: [Title]** - Automate task creation.\n- **add task: [Title]** - Automate task creation.\n\nType conversational requests like *'I need to fix X'* to talk to the AI (runs using `agy` command).".to_string());
         }
 
-        let mut context_str = String::new();
-        
-        context_str.push_str("### Real-Time System Status:\n");
-        context_str.push_str(&format!("- Orchestrator Version: v{}\n", env!("CARGO_PKG_VERSION")));
-        let daemon_running = backend::daemon::is_daemon_running();
-        context_str.push_str(&format!("- Daemon Status: {}\n", if daemon_running { "RUNNING" } else { "STOPPED" }));
-        let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
-        context_str.push_str(&format!("- Dashboard Port: {}\n", port));
+        let global_instr_path = backend::vault::get_base_dir().join("memory/system_instructions.md");
+        let global_instr = std::fs::read_to_string(global_instr_path).unwrap_or_default();
 
-        let projects = backend::state::load_state();
-        if !projects.is_empty() {
-            context_str.push_str("\n### Registered Projects:\n");
-            for (name, info) in &projects {
-                context_str.push_str(&format!("- **{}**: Status: {}, Path: {}, Goal: {}\n", name, info.status, info.path, info.goal));
-            }
-        } else {
-            context_str.push_str("\nNo registered projects found.\n");
-        }
+        let system_instruction = format!(
+            "You are the Central Orchestrator (Personal Secretary) AI assistant for the user, communicating through the dashboard chat interface.\n\
+            To answer the user's questions or perform their requests, you should retrieve knowledge and status in a Just-in-Time (JIT) manner by running terminal commands using your run_command tool.\n\n\
+            Here are the primary commands you can execute to query the orchestrator's state JIT:\n\
+            - `/home/wimvm/.local/bin/agy-orchestrator info` to get the system, daemon, and dashboard status.\n\
+            - `/home/wimvm/.local/bin/agy-orchestrator list` to get the list of registered projects.\n\
+            - `/home/wimvm/.local/bin/agy-orchestrator get-context --name <project>` to get the path, goal, and status of a specific project.\n\
+            - `/home/wimvm/.local/bin/agy-orchestrator issue --list` to get the current list of evolution tasks and issues.\n\
+            - `/home/wimvm/.local/bin/agy-orchestrator query-memory --query \"<keywords>\"` to find user preferences or design guidelines in the memory vault.\n\n\
+            If the user asks to create or register a task, you can do so by running:\n\
+            - `/home/wimvm/.local/bin/agy-orchestrator issue --create \"<Title>\" --body \"<Description>\"`\n\
+            (Alternatively, you can append `[CREATE_TASK: Title | Body]` at the very end of your final response text, and the system will automatically parse and register it for you).\n\n\
+            Always run the appropriate commands first to obtain the latest real-time status before answering. Do not guess.\n\n\
+            --- GLOBAL OPERATIONAL GUIDELINES ---\n\
+            {}",
+            global_instr
+        );
 
-        let issues = backend::issue::load_issues();
-        if !issues.is_empty() {
-            context_str.push_str("\n### Evolution Tasks / Issues:\n");
-            let mut open_tasks = Vec::new();
-            let mut ip_tasks = Vec::new();
-            let mut resolved_tasks = Vec::new();
-            let mut failed_tasks = Vec::new();
-            for issue in &issues {
-                match issue.status.as_str() {
-                    "open" => open_tasks.push(issue),
-                    "in-progress" => ip_tasks.push(issue),
-                    "resolved" => resolved_tasks.push(issue),
-                    _ => failed_tasks.push(issue),
-                }
-            }
-            if !open_tasks.is_empty() {
-                context_str.push_str("#### Open:\n");
-                for t in open_tasks {
-                    context_str.push_str(&format!("  - [#{}]: {} ({})\n", t.id, t.title, t.body));
-                }
-            }
-            if !ip_tasks.is_empty() {
-                context_str.push_str("#### In Progress:\n");
-                for t in ip_tasks {
-                    context_str.push_str(&format!("  - [#{}]: {} ({})\n", t.id, t.title, t.body));
-                }
-            }
-            if !resolved_tasks.is_empty() {
-                context_str.push_str("#### Resolved (Recent 5):\n");
-                let count = resolved_tasks.len();
-                let start = if count > 5 { count - 5 } else { 0 };
-                for t in &resolved_tasks[start..] {
-                    context_str.push_str(&format!("  - [#{}]: {}\n", t.id, t.title));
-                }
-            }
-            if !failed_tasks.is_empty() {
-                context_str.push_str("#### Failed:\n");
-                for t in failed_tasks {
-                    context_str.push_str(&format!("  - [#{}]: {} ({})\n", t.id, t.title, t.body));
-                }
-            }
-        } else {
-            context_str.push_str("\nNo evolution tasks found.\n");
-        }
-
-        let system_instruction = "You are the AGY Orchestrator AI assistant. You help the user manage their tasks and coding evolution. You have access to real-time system context including registered projects and evolution tasks. If the user mentions a specific coding task, issue, or feature they want to build, you can automatically generate a task for them by appending `[CREATE_TASK: Title | Body]` at the very end of your response. Example: 'I\\'ll help you with that. Let\\'s create a task. [CREATE_TASK: Add Dark Mode | Implement dark mode toggling in the dashboard.]'";
-        
         let prompt_payload = format!(
-            "[System Instruction: {}]\n\n[Orchestrator Current Context (Real-Time System State)]:\n{}\n\nUser Message: {}",
+            "[System Instruction: {}]\n\nUser Message: {}",
             system_instruction,
-            context_str,
             msg_trimmed
         );
 
