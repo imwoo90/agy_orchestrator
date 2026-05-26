@@ -694,7 +694,7 @@ async fn send_chat_message(session_id: String, message: String) -> Result<ChatRe
             return Err(ServerFnError::new("No active session ID provided"));
         }
 
-        let mut actual_session_id = promote_session_if_draft(&session_id);
+        let actual_session_id = promote_session_if_draft(&session_id);
         let lower_msg = msg_trimmed.to_lowercase();
 
         // Short-circuit: direct agy-orchestrator commands execution
