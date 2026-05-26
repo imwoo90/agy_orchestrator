@@ -376,3 +376,21 @@ In the live log viewer, when new events or updates arrive or when first entering
 - Built and installed the binary using `self-upgrade`.
 - Verified that both the daemon and dashboard are up and running healthily.
 
+
+
+# 📅 History log from 2026-05-27 06:51:54 (Spawned at 2026-05-25T23:15:48+09:00)
+
+# Evolution Completion Report: Fix slash command handling in chat assistant (#46)
+
+## Problem Summary
+The chat assistant previously prepended system instructions to all user messages before sending them to the `agy` (antigravity-cli) prompt executor. This prevented `agy`'s command router from detecting slash commands (like `/agents`, `/goal`, and `/help`) at the start of the message. Consequently, these commands were processed as normal text messages by the Gemini model, which sometimes attempted to make blocking, interactive tool calls (such as `ask_question`) causing the non-interactive chat backend process to hang indefinitely.
+
+## Resolution Details
+- Modified `send_chat_message` inside `src/main.rs` to detect if the user's message starts with a slash `/`.
+- If a slash command is detected, the message is routed directly to `agy`'s prompt parameter without any prepended system instructions.
+- This allows `agy` CLI to intercept and execute the slash command directly in its native, non-interactive environment, returning the output cleanly and instantly.
+
+## Verification
+- Ran `cargo test` and verified all unit tests pass successfully.
+- Registered issue #46 and successfully ran the evolution harness `agy-orchestrator evolution-harness --issue-id 46`, which completed clippy and unit tests gates and pushed changes to the repository.
+

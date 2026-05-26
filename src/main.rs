@@ -8,6 +8,44 @@ pub mod frontend;
 
 use frontend::app::{ProjectInfo, Issue, HealthCheckResult, FeedbackResponse};
 
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
+static DRAFT_MAPPINGS: std::sync::OnceLock<std::sync::Mutex<HashMap<String, String>>> = std::sync::OnceLock::new();
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
+fn get_draft_mappings() -> &'static std::sync::Mutex<HashMap<String, String>> {
+    DRAFT_MAPPINGS.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
+fn register_draft_mapping(draft_id: String, real_id: String) {
+    if let Ok(mut lock) = get_draft_mappings().lock() {
+        lock.insert(draft_id, real_id);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
+fn resolve_draft_id(id: &str) -> String {
+    if let Ok(lock) = get_draft_mappings().lock() {
+        if let Some(mapped) = lock.get(id) {
+            return mapped.clone();
+        }
+    }
+    id.to_string()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
+fn remove_draft_mapping(draft_id: &str) {
+    if let Ok(mut lock) = get_draft_mappings().lock() {
+        lock.remove(draft_id);
+    }
+}
+
+
 // Server Functions
 #[server]
 async fn get_projects() -> Result<HashMap<String, ProjectInfo>, ServerFnError> {
@@ -367,12 +405,13 @@ async fn get_chat_history(session_id: String) -> Result<Vec<crate::frontend::app
     #[cfg(not(target_arch = "wasm32"))]
     {
         use crate::frontend::app::ChatMessage;
-        if session_id.is_empty() || session_id.starts_with("draft-") {
+        let resolved_id = resolve_draft_id(&session_id);
+        if resolved_id.is_empty() || resolved_id.starts_with("draft-") {
             return Ok(Vec::new());
         }
 
         let transcript_path = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain/")
-            .join(&session_id)
+            .join(&resolved_id)
             .join(".system_generated/logs/transcript_full.jsonl");
 
         if !transcript_path.exists() {
@@ -938,74 +977,85 @@ async fn send_chat_message(session_id: String, message: String) -> Result<ChatRe
             cmd.arg("--continue");
         }
 
-        let output = cmd.output();
+        let mut child = cmd.spawn().map_err(|e| ServerFnError::new(e.to_string()))?;
 
-        match output {
-            Ok(out) if out.status.success() => {
-                let final_session_id = if is_new_session {
-                    let after_dirs = get_brain_sessions();
-                    let diff: std::collections::HashSet<_> = after_dirs.difference(&before_dirs).cloned().collect();
-                    let resolved_new_id = if !diff.is_empty() {
-                        find_newest_brain_session(&diff)
-                    } else {
-                        None
-                    };
+        let final_session_id = if is_new_session {
+            // Sleep briefly to let agy start and create the directory
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            
+            let after_dirs = get_brain_sessions();
+            let diff: std::collections::HashSet<_> = after_dirs.difference(&before_dirs).cloned().collect();
+            let resolved_new_id = if !diff.is_empty() {
+                find_newest_brain_session(&diff)
+            } else {
+                None
+            };
 
-                    if let Some(new_id) = resolved_new_id {
-                        if new_id != actual_session_id {
-                            if let Ok(mut sessions) = load_chat_sessions() {
-                                if let Some(session) = sessions.iter_mut().find(|s| s.id == actual_session_id) {
-                                    session.id = new_id.clone();
-                                }
-                                let _ = save_chat_sessions(&sessions);
-                            }
-                            
-                            let base_dir = backend::vault::get_base_dir();
-                            let _ = std::fs::write(base_dir.join("active_chat_session_id.txt"), &new_id);
+            let resolved_id = if let Some(new_id) = resolved_new_id {
+                if new_id != actual_session_id {
+                    if let Ok(mut sessions) = load_chat_sessions() {
+                        if let Some(session) = sessions.iter_mut().find(|s| s.id == actual_session_id) {
+                            session.id = new_id.clone();
                         }
-                        new_id
-                    } else {
-                        // Fallback to ls -td if directory diff is empty
-                        if let Ok(path_output) = std::process::Command::new("sh")
-                            .arg("-c")
-                            .arg("ls -td /home/wimvm/.gemini/antigravity-cli/brain/*/ | grep -v '/draft-' | head -n 1")
-                            .output()
-                        {
-                            if path_output.status.success() {
-                                let path_str = String::from_utf8_lossy(&path_output.stdout).trim().to_string();
-                                if !path_str.is_empty() {
-                                    if let Some(filename) = std::path::Path::new(&path_str).file_name() {
-                                        let new_id = filename.to_string_lossy().into_owned();
-                                        
-                                        if new_id != actual_session_id {
-                                            if let Ok(mut sessions) = load_chat_sessions() {
-                                                if let Some(session) = sessions.iter_mut().find(|s| s.id == actual_session_id) {
-                                                    session.id = new_id.clone();
-                                                }
-                                                let _ = save_chat_sessions(&sessions);
-                                            }
-                                            
-                                            let base_dir = backend::vault::get_base_dir();
-                                            let _ = std::fs::write(base_dir.join("active_chat_session_id.txt"), &new_id);
+                        let _ = save_chat_sessions(&sessions);
+                    }
+                    
+                    let base_dir = backend::vault::get_base_dir();
+                    let _ = std::fs::write(base_dir.join("active_chat_session_id.txt"), &new_id);
+                }
+                register_draft_mapping(session_id.clone(), new_id.clone());
+                new_id
+            } else {
+                // Fallback to ls -td if directory diff is empty
+                if let Ok(path_output) = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg("ls -td /home/wimvm/.gemini/antigravity-cli/brain/*/ | grep -v '/draft-' | head -n 1")
+                    .output()
+                {
+                    if path_output.status.success() {
+                        let path_str = String::from_utf8_lossy(&path_output.stdout).trim().to_string();
+                        if !path_str.is_empty() {
+                            if let Some(filename) = std::path::Path::new(&path_str).file_name() {
+                                let new_id = filename.to_string_lossy().into_owned();
+                                
+                                if new_id != actual_session_id {
+                                    if let Ok(mut sessions) = load_chat_sessions() {
+                                        if let Some(session) = sessions.iter_mut().find(|s| s.id == actual_session_id) {
+                                            session.id = new_id.clone();
                                         }
-                                        new_id
-                                    } else {
-                                        actual_session_id.clone()
+                                        let _ = save_chat_sessions(&sessions);
                                     }
-                                } else {
-                                    actual_session_id.clone()
+                                    
+                                    let base_dir = backend::vault::get_base_dir();
+                                    let _ = std::fs::write(base_dir.join("active_chat_session_id.txt"), &new_id);
                                 }
+                                register_draft_mapping(session_id.clone(), new_id.clone());
+                                new_id
                             } else {
                                 actual_session_id.clone()
                             }
                         } else {
                             actual_session_id.clone()
                         }
+                    } else {
+                        actual_session_id.clone()
                     }
                 } else {
                     actual_session_id.clone()
-                };
+                }
+            };
+            resolved_id
+        } else {
+            actual_session_id.clone()
+        };
 
+        let output = child.wait_with_output();
+
+        // Cleanup draft mapping on return
+        remove_draft_mapping(&session_id);
+
+        match output {
+            Ok(out) if out.status.success() => {
                 let _ = check_and_rename_session(&final_session_id, msg_trimmed);
 
                 match get_transcript_content_by_id(&final_session_id) {

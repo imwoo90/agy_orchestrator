@@ -365,6 +365,39 @@ pub fn ChatTab(
         let active_id_spawn = active_id.clone();
         let mut active_session_id_ref = active_session_id;
 
+        // Start polling transcript history in the background to show progress in real-time
+        let active_id_poll = active_id_spawn.clone();
+        let mut msg_list_poll = messages;
+        let loading_poll = is_loading;
+        
+        spawn(async move {
+            #[cfg(target_arch = "wasm32")]
+            {
+                gloo_timers::future::TimeoutFuture::new(1000).await;
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+
+            while loading_poll.read().get(&active_id_poll).copied().unwrap_or(false) {
+                if let Ok(history) = crate::get_chat_history(active_id_poll.clone()).await {
+                    if !history.is_empty() {
+                        msg_list_poll.write().insert(active_id_poll.clone(), history);
+                    }
+                }
+                
+                #[cfg(target_arch = "wasm32")]
+                {
+                    gloo_timers::future::TimeoutFuture::new(1500).await;
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                }
+            }
+        });
+
         spawn(async move {
             msg_list.write().entry(active_id_spawn.clone()).or_default().push(ChatMessage {
                 is_user: true,
@@ -391,11 +424,17 @@ pub fn ChatTab(
                         active_session_id_ref.set(Some(response.actual_session_id.clone()));
                     }
 
-                    msg_list.write().entry(final_id.clone()).or_default().push(ChatMessage {
-                        is_user: false,
-                        text: response.reply,
-                        timestamp: chrono::Local::now().format("%H:%M").to_string(),
-                    });
+                    // Fetch final complete history from backend
+                    if let Ok(history) = crate::get_chat_history(final_id.clone()).await {
+                        msg_list.write().insert(final_id.clone(), history);
+                    } else {
+                        // Fallback
+                        msg_list.write().entry(final_id.clone()).or_default().push(ChatMessage {
+                            is_user: false,
+                            text: response.reply,
+                            timestamp: chrono::Local::now().format("%H:%M").to_string(),
+                        });
+                    }
                     
                     if let Ok(sessions) = crate::get_chat_sessions().await {
                         chat_sessions_sig.set(sessions);
