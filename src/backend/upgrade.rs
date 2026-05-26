@@ -269,6 +269,15 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
             return Err(e);
         }
 
+        let new_manifest = new_exe.parent().unwrap().join(".manifest.json");
+        let current_manifest = current_exe.parent().unwrap().join(".manifest.json");
+        if new_manifest.exists() {
+            let _ = fs::copy(&new_manifest, &current_manifest);
+            if current_exe.to_string_lossy().contains("target/debug") {
+                let _ = fs::copy(&new_manifest, workspace_root.join(".manifest.json"));
+            }
+        }
+
         if new_public.exists() {
             if active_public.exists() {
                 let _ = fs::remove_dir_all(&active_public);
@@ -553,6 +562,12 @@ pub fn run_remote_upgrade(download_url: &str) -> io::Result<()> {
         let _ = fs::remove_file(&backup_exe);
         let _ = fs::remove_dir_all(&temp_extract_dir);
         return Err(e);
+    }
+
+    let temp_manifest = temp_extract_dir.join(".manifest.json");
+    if temp_manifest.exists() {
+        let current_manifest = current_exe.parent().unwrap().join(".manifest.json");
+        let _ = fs::copy(&temp_manifest, &current_manifest);
     }
 
     if temp_public.exists() {
