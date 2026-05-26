@@ -21,6 +21,7 @@ JIT Memory Agent Orchestrator & Knowledge Vault for AI coding assistants.
     - Direct Slash Command Execution: Bypasses system instructions for prompts starting with `/` (e.g. `/agents`, `/goal`) to route them directly to the `agy` CLI, preventing LLM interactive tool blocks.
 - Port Conflict Fix: Prevents environment pollution by explicitly clearing PORT, ADDR, IP, and DIOXUS_ACTIVE from command builders when spawning subcommands and background daemons from the dashboard context.
 - **Self-Kill Prevention during Upgrade**: Avoids self-killing the dashboard process when a remote upgrade is initiated from the UI, ensuring the upgrade server function returns a successful response to the browser before triggering a clean background restart.
+- **Sandbox Permission Management**: Exposes settings.json authorization status and whitelists paths on spawning or via the dashboard Projects UI to prevent background subagents from timing out on permission prompts.
 
 ## Project Playbook (AGENTS.md)
 Rules for AI developers:
@@ -31,3 +32,4 @@ Rules for AI developers:
 ## TODO / Future Work
 - `[ ]` Add real-time log streaming for active projects in dashboard.
 - `[ ]` Support multiple registered developers/workspaces simultaneously.
+

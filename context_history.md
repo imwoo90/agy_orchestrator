@@ -434,3 +434,25 @@ The user requested a cleaner, more minimal chat assistant UI by removing unneces
 - Ran `cargo test` and verified all unit tests pass cleanly.
 - Run the evolution harness (`agy-orchestrator evolution-harness --issue-id 48`) to verify static integrity, Clippy, and unit tests gates, and stage the commit locally.
 
+
+
+# 📅 History log from 2026-05-27 08:08:48 (Spawned at 2026-05-25T23:15:48+09:00)
+
+# Completion Report: Sandbox Workspace Authorization from the Dashboard
+
+## 1. Summary of Completed Tasks
+- **Settings Management (`src/backend/vault.rs`)**: Implemented parsing and serialization for `~/.gemini/antigravity-cli/settings.json`. Created helper functions to retrieve settings path, check if path read/write/command rules are authorized, and write authorizations.
+- **Server Controllers (`src/server_fns.rs`)**: Added `check_workspace_auth` and `authorize_workspace_path` server functions. Modified `spawn_project_task` to auto-authorize workspace paths when spawning tasks.
+- **Frontend Components (`src/frontend/components/projects.rs`)**: Added state tracking (`auth_states`) and a reactive effect to check authorizations. Displayed authorization status and rendered an "Authorize" button in the projects list card.
+- **Verification**: Verified using the `evolution-harness` to run all static checks, Clippy lints, and unit tests successfully. Upgraded the daemon and dashboard via `self-upgrade` and restarted all services cleanly.
+
+## 2. Crucial Design/Architectural Choices Made
+- **Settings.json Integration**: Intercepting and whitelisting the project path in `settings.json` is the only way to avoid the sandbox permission prompts triggered by headless subagents spawned through `invoke_subagent`.
+- **Reactive Polling**: Checking permissions reactively via `projects` signal change inside `ProjectsTab` ensures the status updates in real-time when spawning new tasks.
+
+## 3. Minor Choices Resolved Autonomously
+- **Clippy Optimization**: Simplified map evaluations to `is_some_and` and `is_ok` based on Clippy feedback.
+
+## 4. CRITICAL ITEMS FOR REVIEW
+None
+
