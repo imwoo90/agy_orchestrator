@@ -16,7 +16,7 @@ JIT Memory Agent Orchestrator & Knowledge Vault for AI coding assistants.
   - Custom pure-Rust Markdown & code block parser/renderer with interactive copy buttons.
   - Quick action chips for JIT system queries (info, list, issues, create task).
   - Header controls to reset conversation sessions.
-  - Multi-Room Chat Session Management: Switch, create, and delete individual rooms with first-message auto-naming to align with `hermes-agent` UX.
+  - Multi-Room Chat Session Management: Switch, create, and delete individual rooms with first-message auto-naming. Auto-promotes missing/empty UUID session folders safely.
 
 ## Project Playbook (AGENTS.md)
 Rules for AI developers:

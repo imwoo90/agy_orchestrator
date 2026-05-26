@@ -100,3 +100,29 @@ We have implemented and verified a highly robust set of features to align with t
 - Completed evolution harness gates for Issue #33 and #34.
 - Triggered `self-upgrade`, validating the dev counter increased to `dev2` and the old dashboard process was automatically killed and restarted on port 8080.
 
+
+
+# 📅 History log from 2026-05-26 09:07:51 (Spawned at 2026-05-25T23:15:48+09:00)
+
+# Completion Report: Fix missing transcript UUID session promotion bug
+
+## Description of Work
+We resolved a critical conversation failure bug that happened on existing UUID chat rooms that had empty/deleted transcript folders:
+
+1. **Root Cause Analysis**:
+   - When a user selected an existing chat session (with a UUID ID, thus `is_draft` is false) and sent a message, the system passed `--conversation <UUID>` to the `agy` CLI.
+   - However, since the folder was empty or deleted, `agy` CLI rejected the pre-specified conversation ID, printed a warning, and generated a completely new random UUID folder.
+   - Because `is_draft` was false, the backend skipped the UUID promotion/matching logic, trying to read the transcript file from the original requested folder.
+   - This triggered the error: `Failed to retrieve agent response: Transcript file does not exist`.
+
+2. **Resolution**:
+   - Modified `send_chat_message` in `src/main.rs`.
+   - Introduced `is_new_session = is_draft || !transcript_path.exists();`.
+   - If a session is new or does not have a transcript file, we do not pass `--conversation` and enable the promotion logic.
+   - After execution, backend reads the latest modified brain folder and renames the session ID mapping to match the newly generated UUID on the fly.
+   - This keeps conversational flow working seamlessly even if folders are empty.
+
+## Verification
+- Run `cargo test --all-targets` -> 4 tests passed, confirming no regressions.
+- Completed evolution harness and self-upgrade. Verified that the updated dashboard successfully restarted and is serving the fix on port 8080.
+
