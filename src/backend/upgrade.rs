@@ -58,6 +58,10 @@ pub fn restart_dashboard_process(current_exe: &Path) -> io::Result<()> {
     }
 
     if let Some(pid) = dashboard_pid {
+        if pid == std::process::id() {
+            println!("Target dashboard PID {} matches current process. Skipping self-kill to allow graceful deferral.", pid);
+            return Ok(());
+        }
         println!("Stopping running dashboard (PID: {})...", pid);
         let _ = Command::new("kill").arg(pid.to_string()).status();
         std::thread::sleep(std::time::Duration::from_secs(1));
