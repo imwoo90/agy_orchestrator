@@ -71,6 +71,18 @@ pub fn restart_dashboard_process(current_exe: &Path) -> io::Result<()> {
         .env_remove("IP")
         .env_remove("DIOXUS_ACTIVE");
 
+    let log_file_path = std::path::Path::new("/home/wimvm/.local/bin/dashboard.log");
+    if let Ok(log_file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_file_path)
+    {
+        if let Ok(log_clone) = log_file.try_clone() {
+            cmd.stdout(Stdio::from(log_clone));
+        }
+        cmd.stderr(Stdio::from(log_file));
+    }
+
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;

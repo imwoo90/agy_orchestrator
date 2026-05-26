@@ -699,24 +699,24 @@ async fn send_chat_message(session_id: String, message: String) -> Result<String
         );
 
         let is_draft = session_id.starts_with("draft-");
+        let brain_dir = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(&session_id);
+        let transcript_path = brain_dir.join(".system_generated/logs/transcript_full.jsonl");
+        let is_new_session = is_draft || !transcript_path.exists();
+
         let mut cmd = std::process::Command::new("/home/wimvm/.local/bin/agy");
         cmd.arg("--prompt").arg(&prompt_payload);
         cmd.arg("--dangerously-skip-permissions");
 
-        if !is_draft {
+        if !is_new_session {
             cmd.arg("--conversation").arg(&session_id);
-            let brain_dir = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(&session_id);
-            let transcript_path = brain_dir.join(".system_generated/logs/transcript_full.jsonl");
-            if transcript_path.exists() {
-                cmd.arg("--continue");
-            }
+            cmd.arg("--continue");
         }
 
         let output = cmd.output();
 
         match output {
             Ok(out) if out.status.success() => {
-                let actual_session_id = if is_draft {
+                let actual_session_id = if is_new_session {
                     if let Ok(path_output) = std::process::Command::new("sh")
                         .arg("-c")
                         .arg("ls -td /home/wimvm/.gemini/antigravity-cli/brain/*/ | head -n 1")
@@ -728,15 +728,17 @@ async fn send_chat_message(session_id: String, message: String) -> Result<String
                                 if let Some(filename) = std::path::Path::new(&path_str).file_name() {
                                     let new_id = filename.to_string_lossy().into_owned();
                                     
-                                    if let Ok(mut sessions) = load_chat_sessions() {
-                                        if let Some(session) = sessions.iter_mut().find(|s| s.id == session_id) {
-                                            session.id = new_id.clone();
+                                    if new_id != session_id {
+                                        if let Ok(mut sessions) = load_chat_sessions() {
+                                            if let Some(session) = sessions.iter_mut().find(|s| s.id == session_id) {
+                                                session.id = new_id.clone();
+                                            }
+                                            let _ = save_chat_sessions(&sessions);
                                         }
-                                        let _ = save_chat_sessions(&sessions);
+                                        
+                                        let base_dir = backend::vault::get_base_dir();
+                                        let _ = std::fs::write(base_dir.join("active_chat_session_id.txt"), &new_id);
                                     }
-                                    
-                                    let base_dir = backend::vault::get_base_dir();
-                                    let _ = std::fs::write(base_dir.join("active_chat_session_id.txt"), &new_id);
 
                                     new_id
                                 } else {
