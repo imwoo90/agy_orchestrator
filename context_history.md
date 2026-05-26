@@ -311,3 +311,18 @@ In the live log viewer, when new events or updates arrive or when first entering
 - **Fixed Headers**: Component titles and action buttons (like "New Task", "New Issue", "Add Note") stay locked at the top of the viewport when scrolling lists.
 - **True Desktop Feel**: The dashboard behaves like a native high-quality desktop web app, using screen height and width dynamically.
 
+
+
+# 📅 History log from 2026-05-26 23:10:25 (Spawned at 2026-05-25T23:15:48+09:00)
+
+# Completion Report: Desktop Layout Optimizations and Input Autofocus
+
+## Completed Work
+1. **App shell height normalization**: Set main wrapper to `h-full overflow-hidden` so that inner content fits the viewport.
+2. **Projects Tab (`projects.rs`)**: Fixed header elements and placed projects grid inside scrollable `overflow-y-auto` container.
+3. **Kanban Issues Tab (`issues.rs`)**: Column grid stretches to fill height (`items-stretch flex-1 min-h-0 overflow-hidden`), columns list scrolls independently, and column container heights adjust nicely.
+4. **Knowledge Vault Tab (`vault.rs`)**: Layout set to `items-stretch h-full w-full overflow-hidden`, sidebar list is scrollable, and editor textarea occupies the full remaining space height (`flex-1`) dynamically.
+5. **Live Logs Tab (`logs.rs`)**: Layout modified to `h-full w-full overflow-hidden` with scrollable terminal window height auto-scaling.
+6. **Chat Assistant Tab (`chat.rs`)**: Fully polished with autofocus on chat input field and custom styled scrollbars.
+7. **Connection Interruption Diagnosis**: Confirmed the temporary socket disconnection ("lock" issue) was caused by the self-upgrade daemon restart triggered during KST 23:01 to deploy the new build.
+
