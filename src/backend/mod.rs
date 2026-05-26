@@ -6,3 +6,4 @@ pub mod state;
 pub mod upgrade;
 pub mod vault;
 pub mod commands;
+pub mod chat_session;

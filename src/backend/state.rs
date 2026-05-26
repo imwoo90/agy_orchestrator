@@ -1,4 +1,4 @@
-use crate::frontend::app::ProjectInfo;
+use crate::models::ProjectInfo;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Read};

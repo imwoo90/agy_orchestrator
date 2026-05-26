@@ -1,7 +1,7 @@
 use std::io;
 use chrono::Local;
 
-use crate::frontend::app::Issue;
+use crate::models::Issue;
 use crate::backend::issue::{load_issues, save_issues, sync_github_issues};
 use crate::backend::cli::CliResult;
 

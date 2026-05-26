@@ -1,4 +1,4 @@
-use crate::frontend::app::{Issue, FeedbackResponse};
+use crate::models::{Issue, FeedbackResponse};
 use std::fs::File;
 use std::io;
 use serde::Deserialize;

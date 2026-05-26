@@ -1,4 +1,4 @@
-use crate::frontend::app::{HealthCheckResult, Issue};
+use crate::models::{HealthCheckResult, Issue};
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -206,7 +206,7 @@ pub fn run_health_checks() -> io::Result<Vec<HealthCheckResult>> {
 mod tests {
     use super::*;
     use std::fs;
-    use crate::frontend::app::ProjectInfo;
+    use crate::models::ProjectInfo;
 
     #[test]
     fn test_health_checks_skips_running_projects() {

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use chrono::Local;
 
-use crate::frontend::app::ProjectInfo;
+use crate::models::ProjectInfo;
 use crate::backend::vault::get_base_dir;
 use crate::backend::state::{load_state, save_state, check_project_status};
 use crate::backend::cli::CliResult;

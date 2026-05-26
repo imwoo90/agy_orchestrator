@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use crate::frontend::app::FeedbackResponse;
+use crate::models::FeedbackResponse;
 
 #[component]
 pub fn FeedbackModal(show_modal: Signal<bool>) -> Element {

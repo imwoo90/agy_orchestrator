@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 use std::collections::HashMap;
-use crate::frontend::app::{ProjectInfo, HealthCheckResult};
+use crate::models::{ProjectInfo, HealthCheckResult};
 
 #[component]
 pub fn ProjectsTab(

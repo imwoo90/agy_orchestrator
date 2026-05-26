@@ -6,7 +6,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use chrono::Local;
 
-use crate::frontend::app::ProjectInfo;
+use crate::models::ProjectInfo;
 use super::vault::get_base_dir;
 use super::state::{load_state, save_state, is_pid_alive};
 use super::issue::{load_issues, save_issues};

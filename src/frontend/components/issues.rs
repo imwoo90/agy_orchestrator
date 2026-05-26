@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use crate::frontend::app::Issue;
+use crate::models::Issue;
 
 #[component]
 pub fn IssuesTab(issues: Signal<Vec<Issue>>) -> Element {

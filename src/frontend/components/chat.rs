@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use dioxus::document::eval;
 use std::collections::HashMap;
-use crate::frontend::app::{Issue, ChatMessage, ChatSession};
+use crate::models::{Issue, ChatMessage, ChatSession};
 
 
 #[derive(Debug, Clone, PartialEq)]

@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 use std::collections::HashMap;
-use crate::frontend::app::ProjectInfo;
+use crate::models::ProjectInfo;
 
 #[component]
 pub fn VaultTab(
