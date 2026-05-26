@@ -416,3 +416,21 @@ The chat assistant previously blocked synchronously on the `agy` CLI process exe
 - Ran `cargo test` and verified all unit tests pass with no warnings.
 - Ran the evolution harness (`agy-orchestrator evolution-harness --issue-id 47`) and consolidated context.
 
+
+
+# 📅 History log from 2026-05-27 07:17:03 (Spawned at 2026-05-25T23:15:48+09:00)
+
+# Evolution Completion Report: Simplify chat assistant UI and add attachment placeholder (#48)
+
+## Problem Summary
+The user requested a cleaner, more minimal chat assistant UI by removing unnecessary/cluttering elements, while establishing the groundwork for future file/image attachment capabilities.
+
+## Resolution Details
+- Removed the static "Hermes Mode" badge from the chat room header in `src/frontend/components/chat.rs`.
+- Removed the "JIT Commands / Quick Actions" button bar entirely to free up vertical space and simplify the interface.
+- Added a sleek, glassmorphic file attachment paperclip icon (`📎`) button next to the chat text input field. When clicked, it alerts the user that file attachments are coming soon, establishing the UX anchor for future work.
+
+## Verification
+- Ran `cargo test` and verified all unit tests pass cleanly.
+- Run the evolution harness (`agy-orchestrator evolution-harness --issue-id 48`) to verify static integrity, Clippy, and unit tests gates, and stage the commit locally.
+
