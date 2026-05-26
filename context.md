@@ -18,6 +18,7 @@ JIT Memory Agent Orchestrator & Knowledge Vault for AI coding assistants.
   - Header controls to reset conversation sessions.
   - Multi-Room Chat Session Management: Switch, create, and delete individual rooms with first-message auto-naming. Auto-promotes missing/empty UUID session folders safely.
   - Isolated UX states: HashMap-based loading flags per room and active session filtering to prevent cross-room message bleed-through.
+  - Robust Session Mapping & Simple Chat Fast-Path: Unifies session promotion, filters out draft directories to prevent path errors, and strips heavy prompts context for simple chats to reduce TTFT/latency.
 
 ## Project Playbook (AGENTS.md)
 Rules for AI developers:

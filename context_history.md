@@ -149,3 +149,27 @@ We resolved a critical UX concurrency bug and fixed local dev version build trac
 - Checked unit and integration tests -> all passed.
 - Upgraded the binary and verified that dashboard (PID: 469340) restarted on port 8080.
 
+
+
+# 📅 History log from 2026-05-26 09:28:16 (Spawned at 2026-05-25T23:15:48+09:00)
+
+# Evolution Report: Chat Session Mapping and Simple Chat Latency Fixes
+
+## Problem Solved
+- Resolved the issue where the chat assistant failed to return responses due to a `Transcript file does not exist` error when creating/interacting with new rooms.
+- Optimized response times for simple conversation queries (like hello, test) by stripping heavy system prompt wrappers.
+- Fixed loading state isolation bugs where switching rooms left the send button disabled.
+
+## Solution Architecture
+1. **Unifying Promotion on Entry**: Introduced `promote_session_if_draft` to promote a temporary `draft-` session ID into a persistent `session-<TIMESTAMP>` ID immediately on entry of `send_chat_message`. This ensures both short-circuit custom commands and standard AI prompt executions use the same promoted ID.
+2. **Excluding Drafts from Directory Resolution**: Updated the `ls -td` directory lookup parsing to apply `grep -v '/draft-'`, preventing it from incorrectly grabbing incomplete draft directories as active sessions.
+3. **ChatResponse Return Struct**: Converted `send_chat_message` return type from `String` to `ChatResponse` containing the reply and `actual_session_id`.
+4. **Active Session ID Sync**: Linked the frontend to immediately update `active_session_id` Signal with `response.actual_session_id` upon response, maintaining session highlight and continuity.
+5. **Simple Chat Classifier & Fast-Path**: Strip down the 6KB+ system context wrapper for simple messages (<40 characters) lacking system execution keywords to improve TTFT and response times significantly.
+6. **Clippy Warning Suppression**: Resolved target-dependent clippy warnings by appending `#[allow(dead_code)]` and fixing `to_string` formatting arg lints.
+
+## Verification
+- Unit test suite ran successfully (4 tests passed).
+- CLI self-upgrade compiled in release and hot-reloaded the active systemd user service.
+- Git auto-commit pushed to remote `main` branch under evolution issue #38.
+

@@ -284,7 +284,7 @@ fn render_markdown(text: &str) -> Element {
 
 #[component]
 pub fn ChatTab(
-    messages: Signal<Vec<ChatMessage>>,
+    messages: Signal<HashMap<String, Vec<ChatMessage>>>,
     issues: Signal<Vec<Issue>>,
     active_session_id: Signal<Option<String>>,
     chat_sessions: Signal<Vec<ChatSession>>,
@@ -304,8 +304,17 @@ pub fn ChatTab(
         "AI Personal Secretary".to_string()
     };
 
-    let messages_len = messages.read().len();
-    let display_messages = if messages_len == 0 {
+    let display_messages = if let Some(ref id) = active_id_opt {
+        if let Some(msgs_list) = messages.read().get(id) {
+            msgs_list.clone()
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    let display_messages = if display_messages.is_empty() {
         vec![
             ChatMessage {
                 is_user: false,
@@ -314,7 +323,7 @@ pub fn ChatTab(
             }
         ]
     } else {
-        messages.read().clone()
+        display_messages
     };
 
     let send_message = move || {
@@ -338,7 +347,7 @@ pub fn ChatTab(
         let mut active_session_id_ref = active_session_id;
 
         spawn(async move {
-            msg_list.write().push(ChatMessage {
+            msg_list.write().entry(active_id_spawn.clone()).or_default().push(ChatMessage {
                 is_user: true,
                 text: text.clone(),
                 timestamp: chrono::Local::now().format("%H:%M").to_string(),
@@ -350,15 +359,25 @@ pub fn ChatTab(
             match crate::send_chat_message(active_id_spawn.clone(), text).await {
                 Ok(response) => {
                     final_id = response.actual_session_id.clone();
-                    active_session_id_ref.set(Some(response.actual_session_id.clone()));
-
-                    if Some(response.actual_session_id.clone()) == *active_session_id_ref.read() {
-                        msg_list.write().push(ChatMessage {
-                            is_user: false,
-                            text: response.reply,
-                            timestamp: chrono::Local::now().format("%H:%M").to_string(),
-                        });
+                    
+                    // Session promotion migration inside the HashMap cache
+                    if final_id != active_id_spawn {
+                        let mut map = msg_list;
+                        let draft_history = map.write().remove(&active_id_spawn);
+                        if let Some(draft_history) = draft_history {
+                            map.write().insert(final_id.clone(), draft_history);
+                        }
                     }
+
+                    if Some(active_id_spawn.clone()) == *active_session_id_ref.read() {
+                        active_session_id_ref.set(Some(response.actual_session_id.clone()));
+                    }
+
+                    msg_list.write().entry(final_id.clone()).or_default().push(ChatMessage {
+                        is_user: false,
+                        text: response.reply,
+                        timestamp: chrono::Local::now().format("%H:%M").to_string(),
+                    });
                     
                     if let Ok(sessions) = crate::get_chat_sessions().await {
                         chat_sessions_sig.set(sessions);
@@ -368,13 +387,11 @@ pub fn ChatTab(
                     }
                 }
                 Err(e) => {
-                    if Some(active_id_spawn.clone()) == *active_session_id_ref.read() {
-                        msg_list.write().push(ChatMessage {
-                            is_user: false,
-                            text: format!("⚠️ Error: {}", e),
-                            timestamp: chrono::Local::now().format("%H:%M").to_string(),
-                        });
-                    }
+                    msg_list.write().entry(active_id_spawn.clone()).or_default().push(ChatMessage {
+                        is_user: false,
+                        text: format!("⚠️ Error: {}", e),
+                        timestamp: chrono::Local::now().format("%H:%M").to_string(),
+                    });
                 }
             }
             loading.write().insert(active_id_spawn.clone(), false);
@@ -402,7 +419,7 @@ pub fn ChatTab(
                                     if let Ok(s) = crate::get_chat_sessions().await {
                                         sessions_sig.set(s);
                                     }
-                                    msgs.set(Vec::new());
+                                    msgs.write().insert(new_id, Vec::new());
                                 }
                             });
                         },
@@ -446,8 +463,12 @@ pub fn ChatTab(
                                             spawn(async move {
                                                 let _ = crate::set_active_session_id(s_id.clone()).await;
                                                 active_sig.set(Some(s_id.clone()));
-                                                if let Ok(history) = crate::get_chat_history(s_id).await {
-                                                    msgs.set(history);
+                                                
+                                                let has_cache = msgs.read().contains_key(&s_id);
+                                                if !has_cache {
+                                                    if let Ok(history) = crate::get_chat_history(s_id.clone()).await {
+                                                        msgs.write().insert(s_id, history);
+                                                    }
                                                 }
                                             });
                                         },
@@ -468,19 +489,22 @@ pub fn ChatTab(
                                                 let mut msgs = messages;
                                                 spawn(async move {
                                                     if crate::delete_chat_session(s_id.clone()).await.is_ok() {
+                                                        msgs.write().remove(&s_id);
                                                         if let Ok(s) = crate::get_chat_sessions().await {
                                                             sessions_sig.set(s);
                                                         }
                                                         match crate::get_active_session_id().await {
                                                             Ok(Some(active_id)) => {
                                                                 active_sig.set(Some(active_id.clone()));
-                                                                if let Ok(history) = crate::get_chat_history(active_id).await {
-                                                                    msgs.set(history);
+                                                                let has_cache = msgs.read().contains_key(&active_id);
+                                                                if !has_cache {
+                                                                    if let Ok(history) = crate::get_chat_history(active_id.clone()).await {
+                                                                        msgs.write().insert(active_id, history);
+                                                                    }
                                                                 }
                                                             }
                                                             Ok(None) | Err(_) => {
                                                                 active_sig.set(None);
-                                                                msgs.set(Vec::new());
                                                             }
                                                         }
                                                     }
@@ -524,29 +548,24 @@ pub fn ChatTab(
                                         let mut msg_list = messages;
                                         let mut loading = is_loading;
                                         let active_id_reset = active_id.clone();
-                                        let active_session_id_ref = active_session_id;
                                         spawn(async move {
                                             loading.write().insert(active_id_reset.clone(), true);
                                             match crate::send_chat_message(active_id_reset.clone(), "reset session".to_string()).await {
                                                 Ok(_) => {
-                                                    if Some(active_id_reset.clone()) == *active_session_id_ref.read() {
-                                                        msg_list.set(vec![
-                                                            ChatMessage {
-                                                                is_user: false,
-                                                                text: "Chat session has been reset. The next message will start a new conversation.".to_string(),
-                                                                timestamp: chrono::Local::now().format("%H:%M").to_string(),
-                                                            }
-                                                        ]);
-                                                    }
+                                                    msg_list.write().insert(active_id_reset.clone(), vec![
+                                                        ChatMessage {
+                                                            is_user: false,
+                                                            text: "Chat session has been reset. The next message will start a new conversation.".to_string(),
+                                                            timestamp: chrono::Local::now().format("%H:%M").to_string(),
+                                                        }
+                                                    ]);
                                                 }
                                                 Err(e) => {
-                                                    if Some(active_id_reset.clone()) == *active_session_id_ref.read() {
-                                                        msg_list.write().push(ChatMessage {
-                                                            is_user: false,
-                                                            text: format!("⚠️ Error resetting chat: {}", e),
-                                                            timestamp: chrono::Local::now().format("%H:%M").to_string(),
-                                                        });
-                                                    }
+                                                    msg_list.write().entry(active_id_reset.clone()).or_default().push(ChatMessage {
+                                                        is_user: false,
+                                                        text: format!("⚠️ Error resetting chat: {}", e),
+                                                        timestamp: chrono::Local::now().format("%H:%M").to_string(),
+                                                    });
                                                 }
                                             }
                                             loading.write().insert(active_id_reset.clone(), false);
@@ -714,7 +733,7 @@ pub fn ChatTab(
                                         if let Ok(s) = crate::get_chat_sessions().await {
                                             sessions_sig.set(s);
                                         }
-                                        msgs.set(Vec::new());
+                                        msgs.write().insert(new_id, Vec::new());
                                     }
                                 });
                             },

@@ -93,7 +93,7 @@ pub fn App() -> Element {
     let mut upgrade_available = use_signal(|| None::<(String, String)>);
     let mut show_feedback_modal = use_signal(|| false);
     let mut upgrade_progress = use_signal(|| UpgradeProgress::Idle);
-    let mut chat_messages = use_signal(Vec::<ChatMessage>::new);
+    let mut chat_messages = use_signal(HashMap::<String, Vec<ChatMessage>>::new);
     let mut active_session_id = use_signal(|| None::<String>);
     let mut chat_sessions = use_signal(Vec::<ChatSession>::new);
 
@@ -104,8 +104,10 @@ pub fn App() -> Element {
         }
         if let Ok(Some(active_id)) = crate::get_active_session_id().await {
             active_session_id.set(Some(active_id.clone()));
-            if let Ok(history) = crate::get_chat_history(active_id).await {
-                chat_messages.set(history);
+            if let Ok(history) = crate::get_chat_history(active_id.clone()).await {
+                let mut map = HashMap::new();
+                map.insert(active_id, history);
+                chat_messages.set(map);
             }
         }
     });
@@ -281,13 +283,12 @@ pub fn App() -> Element {
                                     match crate::get_active_session_id().await {
                                         Ok(Some(active_id)) => {
                                             active_sig.set(Some(active_id.clone()));
-                                            if let Ok(history) = crate::get_chat_history(active_id).await {
-                                                msgs.set(history);
+                                            if let Ok(history) = crate::get_chat_history(active_id.clone()).await {
+                                                msgs.write().insert(active_id, history);
                                             }
                                         }
                                         Ok(None) => {
                                             active_sig.set(None);
-                                            msgs.set(Vec::new());
                                         }
                                         Err(_) => {}
                                     }
