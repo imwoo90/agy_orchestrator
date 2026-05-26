@@ -19,7 +19,7 @@ pub fn LogsTab(logs: Signal<String>) -> Element {
     });
 
     rsx! {
-        div { class: "flex flex-col gap-4 h-[calc(100vh-180px)]",
+        div { class: "flex flex-col gap-4 h-full w-full overflow-hidden",
             div {
                 h2 { class: "text-2xl font-bold text-slate-100", "Live Notification Logs" }
                 p { class: "text-sm text-slate-400 mt-1", "View real-time event updates and background agent activities." }

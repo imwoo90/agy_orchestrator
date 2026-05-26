@@ -22,7 +22,7 @@ JIT Memory Agent Orchestrator & Knowledge Vault for AI coding assistants.
   - Log Tab Auto-Scroll: Automatically scrolls the terminal container to the bottom on mounting and log updates so the latest notifications are instantly visible.
   - Chat Tab Auto-Scroll: Automatically scrolls the message list container to the bottom when entering the chat tab, switching rooms, or when new messages arrive.
   - Clean Chat UX & Command Masking: Mask raw technical CLI command prompts (like info/list) in the chat bubble UI with beautiful human-readable labels, and styled scrollbars for sidebar and chat area.
-  - Native Desktop Integration & Focus: Replaced restricted chat max-widths/heights with standard `h-full w-full` to eliminate double scrollbars on desktop, and added room deletion confirmation and auto-focus for chat input.
+  - Native Desktop Integration & Focus: Replaced restricted container dimensions (for Chat, Projects, Kanban Issues, Knowledge Vault, and Live Logs) with standard `h-full w-full overflow-hidden` and inner flex layouts. This eliminates awkward double scrollbars on desktop, keeps page headers fixed at the top, and implements room deletion confirmation and chat input auto-focus.
 
 ## Project Playbook (AGENTS.md)
 Rules for AI developers:

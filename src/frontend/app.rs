@@ -307,7 +307,8 @@ pub fn App() -> Element {
                 }
 
                 // Tab Content Panel
-                main { class: "flex-1 overflow-y-auto p-8",
+                main {
+                    class: "flex-1 p-8 flex flex-col overflow-hidden h-full",
                     match active_tab.read().as_str() {
                         "projects" => rsx! {
                             ProjectsTab {

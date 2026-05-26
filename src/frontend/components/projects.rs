@@ -39,8 +39,8 @@ pub fn ProjectsTab(
     }
 
     rsx! {
-        div { class: "flex flex-col gap-6",
-            div { class: "flex items-center justify-between",
+        div { class: "flex flex-col gap-6 h-full w-full overflow-hidden",
+            div { class: "flex items-center justify-between shrink-0",
                 div {
                     h2 { class: "text-2xl font-bold text-slate-100", "Projects & Agent Targets" }
                     p { class: "text-sm text-slate-400 mt-1", "Monitor background agent statuses and trigger new autonomous tasks." }
@@ -55,13 +55,14 @@ pub fn ProjectsTab(
 
             // Projects List
             if root_projects.is_empty() {
-                div { class: "bg-slate-900/30 border border-slate-850 rounded-2xl p-12 text-center flex flex-col items-center gap-3",
+                div { class: "bg-slate-900/30 border border-slate-850 rounded-2xl p-12 text-center flex flex-col items-center justify-center gap-3 flex-1",
                     span { class: "text-4xl", "📭" }
                     h3 { class: "font-semibold text-slate-300 text-lg", "No projects registered" }
                     p { class: "text-slate-500 text-sm max-w-sm", "Spawn your first project target to start executing agent tasks." }
                 }
             } else {
-                div { class: "grid grid-cols-1 xl:grid-cols-2 gap-6",
+                div { class: "flex-1 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-slate-800",
+                    div { class: "grid grid-cols-1 xl:grid-cols-2 gap-6 pb-6",
                     for (proj_name, info) in root_projects.iter() {
                         div { class: "bg-slate-900/50 backdrop-blur-md border border-slate-800/80 rounded-2xl p-6 flex flex-col justify-between hover:border-slate-700/60 transition-all duration-200 shadow-lg shadow-slate-950/20",
                             div { class: "flex flex-col gap-4",
@@ -173,6 +174,7 @@ pub fn ProjectsTab(
                     }
                 }
             }
+        }
 
             // Task Spawn Modal
             if *show_modal.read() {

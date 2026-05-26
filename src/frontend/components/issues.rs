@@ -27,8 +27,8 @@ pub fn IssuesTab(issues: Signal<Vec<Issue>>) -> Element {
     }
 
     rsx! {
-        div { class: "flex flex-col gap-6",
-            div { class: "flex items-center justify-between",
+        div { class: "flex flex-col gap-6 h-full w-full overflow-hidden",
+            div { class: "flex items-center justify-between shrink-0",
                 div {
                     h2 { class: "text-2xl font-bold text-slate-100", "Evolution Kanban Board" }
                     p { class: "text-sm text-slate-400 mt-1", "Track issues that the daemon will auto-heal and resolve." }
@@ -42,7 +42,7 @@ pub fn IssuesTab(issues: Signal<Vec<Issue>>) -> Element {
             }
 
             // Kanban columns
-            div { class: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-start",
+            div { class: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-stretch flex-1 min-h-0 overflow-hidden",
                 KanbanColumn {
                     title: "Open",
                     header_bg: "bg-amber-500/10 border-amber-500/20 text-amber-400",
@@ -165,15 +165,15 @@ fn KanbanColumn(
     issues_sig: Signal<Vec<Issue>>
 ) -> Element {
     rsx! {
-        div { class: "bg-slate-900/30 border border-slate-850 rounded-2xl p-4 flex flex-col gap-4 min-h-[400px]",
-            div { class: format!("px-4 py-2.5 rounded-xl border flex items-center justify-between font-bold {}", header_bg),
+        div { class: "bg-slate-900/30 border border-slate-850 rounded-2xl p-4 flex flex-col gap-4 h-full min-h-0",
+            div { class: format!("px-4 py-2.5 rounded-xl border flex items-center justify-between font-bold shrink-0 {}", header_bg),
                 span { "{title}" }
                 span { class: format!("text-xs px-2 py-0.5 rounded-full {}", badge_bg),
                     "{issues.len()}"
                 }
             }
 
-            div { class: "flex flex-col gap-3 overflow-y-auto max-h-[600px] scrollbar-thin scrollbar-thumb-slate-800",
+            div { class: "flex-1 flex flex-col gap-3 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-800 pr-1",
                 if issues.is_empty() {
                     div { class: "text-center py-8 text-xs text-slate-500 font-medium border border-dashed border-slate-850 rounded-xl",
                         "No issues"

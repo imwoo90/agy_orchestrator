@@ -293,3 +293,21 @@ In the live log viewer, when new events or updates arrive or when first entering
    * Inside the existing messages/room change `use_effect` hook, added `document.getElementById('chat-input-field').focus()` alongside the bottom scroll logic. The cursor now automatically focuses the chat input on room changes and mounting.
 4. **Validation**: Built and compiled via Dioxus CLI release build, deployed binary & assets, restarted the service daemon, and confirmed tests pass.
 
+
+
+# 📅 History log from 2026-05-26 23:02:23 (Spawned at 2026-05-25T23:15:48+09:00)
+
+# Desktop Layout & Scroll Normalization Report
+
+## Changes Made
+- **Main App Layout (`app.rs`)**: Modified the main tab content panel class to always be `flex-1 p-8 flex flex-col overflow-hidden h-full`. This removes the top-level scrollbar for the page, forcing each individual tab component to handle its own scrolling.
+- **Projects Tab Layout (`projects.rs`)**: Modified the outer wrapper to use `h-full w-full overflow-hidden`. The page header is kept fixed using `shrink-0`, and the project card grid is wrapped in a `flex-1 overflow-y-auto` scrollable div.
+- **Evolution Kanban Issues Layout (`issues.rs`)**: Adjusted the main page wrapper to `h-full w-full overflow-hidden` and column grid to `items-stretch flex-1 min-h-0 overflow-hidden`. Updated `KanbanColumn` to use `h-full min-h-0` flexbox with issues lists scrolling individually using `flex-1 overflow-y-auto` (replacing the hardcoded `max-h-[600px]`).
+- **Knowledge Vault Layout (`vault.rs`)**: Resized the entire note explorer grid to use the full viewport (`h-full w-full overflow-hidden`). Set notes sidebar list and editor panel to `h-full min-h-0` flex layouts. The Markdown editor textarea now dynamically fills `flex-1` of the screen without clipping.
+- **Live Logs Layout (`logs.rs`)**: Wrapped the component with `overflow-hidden` so that the log terminal stream accurately scrolls inside the terminal container box.
+
+## Impact
+- **No Double Scrollbars**: Desktop users will no longer experience vertical scrolling on both the main container and inner components.
+- **Fixed Headers**: Component titles and action buttons (like "New Task", "New Issue", "Add Note") stay locked at the top of the viewport when scrolling lists.
+- **True Desktop Feel**: The dashboard behaves like a native high-quality desktop web app, using screen height and width dynamically.
+
