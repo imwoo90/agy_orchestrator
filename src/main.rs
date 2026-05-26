@@ -977,7 +977,7 @@ async fn send_chat_message(session_id: String, message: String) -> Result<ChatRe
             cmd.arg("--continue");
         }
 
-        let mut child = cmd.spawn().map_err(|e| ServerFnError::new(e.to_string()))?;
+        let child = cmd.spawn().map_err(|e| ServerFnError::new(e.to_string()))?;
 
         let final_session_id = if is_new_session {
             // Sleep briefly to let agy start and create the directory
