@@ -24,4 +24,5 @@ fn main() {
     println!("cargo:rustc-env=AGY_ORCHESTRATOR_VERSION={}", display_version);
     println!("cargo:rerun-if-changed=Cargo.toml");
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=src/");
 }
