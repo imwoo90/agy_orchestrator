@@ -293,9 +293,10 @@ pub fn ChatTab(
     let is_loading = use_signal(HashMap::<String, bool>::new);
 
     use_effect(move || {
-        // Track active_session_id and messages to trigger when they change
+        // Track active_session_id, messages, and is_loading to trigger when they change
         let _ = active_session_id.read();
         let _ = messages.read();
+        let _ = is_loading.read();
         
         // Scroll the message stream area to the bottom & focus input
         let _ = eval("

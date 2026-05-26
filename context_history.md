@@ -326,3 +326,15 @@ In the live log viewer, when new events or updates arrive or when first entering
 6. **Chat Assistant Tab (`chat.rs`)**: Fully polished with autofocus on chat input field and custom styled scrollbars.
 7. **Connection Interruption Diagnosis**: Confirmed the temporary socket disconnection ("lock" issue) was caused by the self-upgrade daemon restart triggered during KST 23:01 to deploy the new build.
 
+
+
+# 📅 History log from 2026-05-26 23:16:54 (Spawned at 2026-05-25T23:15:48+09:00)
+
+# Fix Chat Tab Auto-Scroll Bug
+
+## What was done
+- Investigated the scroll-to-bottom behavior in the `ChatTab` component (`src/frontend/components/chat.rs`).
+- Identified the root cause: the `use_effect` controlling the scrolling did not track changes to the `is_loading` signal. This caused the scroll-to-bottom to run *before* the loading indicator was removed from the DOM, leaving the view sub-optimally scrolled after the DOM height shrunk.
+- Fixed the issue by adding `is_loading.read()` to the `use_effect` dependency list in `src/frontend/components/chat.rs`.
+- Verified compilation (`cargo check`), run unit tests (`cargo test`), and performed clippy lint checks (`cargo clippy`). All checks passed with zero errors or warnings.
+
