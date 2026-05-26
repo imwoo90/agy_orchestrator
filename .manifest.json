@@ -24,7 +24,7 @@
     "/home/wimvm/works/agy_orchestrator/target/dx/agy-orchestrator/release/web/public/wasm/agy-orchestrator.js": [
       {
         "absolute_source_path": "/home/wimvm/works/agy_orchestrator/target/dx/agy-orchestrator/release/web/public/wasm/agy-orchestrator.js",
-        "bundled_path": "agy-orchestrator-dxh967d5642d0ce79fd.js",
+        "bundled_path": "agy-orchestrator-dxhad21adfb77fea6f3.js",
         "options": {
           "add_hash": true,
           "variant": {
@@ -41,7 +41,7 @@
     "/home/wimvm/works/agy_orchestrator/target/dx/agy-orchestrator/release/web/public/wasm/agy-orchestrator_bg.wasm": [
       {
         "absolute_source_path": "/home/wimvm/works/agy_orchestrator/target/dx/agy-orchestrator/release/web/public/wasm/agy-orchestrator_bg.wasm",
-        "bundled_path": "agy-orchestrator_bg-dxhec6fb17f647321bd.wasm",
+        "bundled_path": "agy-orchestrator_bg-dxh71471e42e653bcde.wasm",
         "options": {
           "add_hash": true,
           "variant": "Unknown"
