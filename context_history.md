@@ -191,3 +191,37 @@ We resolved a critical UX concurrency bug and fixed local dev version build trac
    - Executed `evolution-harness` to auto-commit and push the resolutions for issue #39 and issue #40 to GitHub.
 5. **Deployed upgraded binary**: Ran `self-upgrade` to compile, package, and restart the systemd user service and dashboard process successfully on port 8080.
 
+
+
+# 📅 History log from 2026-05-26 09:49:04 (Spawned at 2026-05-25T23:15:48+09:00)
+
+# Completion Report: Resolved Session ID Duplicate Promotion Race Condition
+
+## Work Accomplished
+1. **Identified Race Condition Root Cause**: Found that when `agy` was executed for a new draft session, it generated a new random UUID. The orchestrator's directory scanner previously used `ls -td ... | head -n 1` to find the newly created directory. If another active session's folder had files written to it concurrently, its timestamp was updated, causing the scanner to return that folder instead. This led to multiple sessions sharing the same ID, causing them to select simultaneously and act as a single room.
+2. **Directory Difference Mapping Implementation**:
+   - Refactored `send_chat_message` in [src/main.rs](file:///home/wimvm/works/agy_orchestrator/src/main.rs) to capture the set of existing brain directories (`before_dirs`) *prior* to executing the CLI subprocess.
+   - Captured the directories again (`after_dirs`) *after* completion.
+   - Calculated the set difference (`after_dirs.difference(&before_dirs)`).
+   - If there is a new directory, it resolves that specific UUID. If there are multiple new directories, it picks the latest modified among the difference.
+   - Fell back to the `ls -td` logic if the difference set was empty (ensuring full backward compatibility).
+3. **Backend Deduplication Safeguard**:
+   - Updated `load_chat_sessions` in [src/main.rs](file:///home/wimvm/works/agy_orchestrator/src/main.rs) to automatically deduplicate the session list by their ID, keeping the first occurrence (active session with title) and discarding duplicate entries.
+4. **Pruned JSON Duplicates**: Manually edited and cleaned up `chat_sessions.json` to remove the duplicate entries created during the race condition.
+5. **OTA Upgraded & Deployed**: Rebuilt and deployed the updated binary on port `8080` via `self-upgrade`, confirming the daemon status remains active and healthy.
+
+
+
+# 📅 History log from 2026-05-26 09:56:18 (Spawned at 2026-05-25T23:15:48+09:00)
+
+# Evolution Report: Auto-Scroll to Bottom in Live Logs Tab
+
+## Problem
+In the live log viewer, when new events or updates arrive or when first entering the logs tab, the user had to manually scroll to the very bottom of the terminal viewer to see the latest log statements.
+
+## Solution
+1. **Added Element ID**: Assigned `id: "live-logs-container"` to the main log viewer terminal component in `src/frontend/components/logs.rs`.
+2. **Added Scroll Effect**: Integrated a Dioxus `use_effect` hook inside the `LogsTab` component. The effect reads `logs` signal to trigger on new updates.
+3. **Javascript Execution**: Runs a browser `eval` command with a slight delay (`setTimeout` of 50ms) to ensure Dioxus has updated the DOM, then scrolls `live-logs-container` to its maximum `scrollTop`.
+4. **Validation**: Compiled and tested locally. Verified all test targets compile and pass successfully. Re-deployed the compiled release binary and restarted the local `agy-orchestrator` service daemon.
+
