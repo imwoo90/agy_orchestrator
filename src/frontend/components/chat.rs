@@ -1,13 +1,8 @@
 use dioxus::prelude::*;
 use dioxus::document::eval;
-use crate::frontend::app::Issue;
+use std::collections::HashMap;
+use crate::frontend::app::{Issue, ChatMessage, ChatSession};
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct ChatMessage {
-    pub is_user: bool,
-    pub text: String,
-    pub timestamp: String,
-}
 
 #[derive(Debug, Clone, PartialEq)]
 enum InlineSpan {
@@ -288,245 +283,504 @@ fn render_markdown(text: &str) -> Element {
 }
 
 #[component]
-pub fn ChatTab(issues: Signal<Vec<Issue>>) -> Element {
-    let messages = use_signal(|| vec![
-        ChatMessage {
-            is_user: false,
-            text: "Hello! I am your AI Orchestrator Assistant. 🤖\n\nI can help you manage your coding evolution and automate task creation.\n\nType conversational requests, or use a command prefix to create tasks:\n- **create task: [Title]**\n- **add task: [Title]**\n\nHow can I help you today?".to_string(),
-            timestamp: chrono::Local::now().format("%H:%M").to_string(),
-        }
-    ]);
+pub fn ChatTab(
+    messages: Signal<HashMap<String, Vec<ChatMessage>>>,
+    issues: Signal<Vec<Issue>>,
+    active_session_id: Signal<Option<String>>,
+    chat_sessions: Signal<Vec<ChatSession>>,
+) -> Element {
     let mut input_text = use_signal(String::new);
-    let is_loading = use_signal(|| false);
+    let is_loading = use_signal(HashMap::<String, bool>::new);
 
-    let send_message = move || {
-        let text = input_text.read().trim().to_string();
-        if text.is_empty() || *is_loading.read() {
+    use_effect(move || {
+        // Track active_session_id, messages, and is_loading to trigger when they change
+        let _ = active_session_id.read();
+        let _ = messages.read();
+        let _ = is_loading.read();
+        
+        // Scroll the message stream area to the bottom & focus input
+        let _ = eval("
+            setTimeout(() => {
+                let el = document.getElementById('chat-messages-container');
+                if (el) {
+                    el.scrollTop = el.scrollHeight;
+                }
+                let input = document.getElementById('chat-input-field');
+                if (input) {
+                    input.focus();
+                }
+            }, 50);
+        ");
+    });
+
+    let active_id_opt = active_session_id.read().clone();
+    let active_loading = if let Some(ref id) = active_id_opt {
+        is_loading.read().get(id).copied().unwrap_or(false)
+    } else {
+        false
+    };
+    let current_session_title = if let Some(ref id) = active_id_opt {
+        chat_sessions.read().iter().find(|s| s.id == *id).map(|s| s.title.clone()).unwrap_or_else(|| "AI Personal Secretary".to_string())
+    } else {
+        "AI Personal Secretary".to_string()
+    };
+
+    let display_messages = if let Some(ref id) = active_id_opt {
+        if let Some(msgs_list) = messages.read().get(id) {
+            msgs_list.clone()
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    let display_messages = if display_messages.is_empty() {
+        vec![
+            ChatMessage {
+                is_user: false,
+                text: "Hello! I am your AI Personal Secretary. 🤖\n\nI can help you manage your projects, check tasks, and automate workflows in a Just-in-Time manner.\n\nAsk me anything, e.g. *'What are the ongoing tasks?'* or *'Show my projects'*!".to_string(),
+                timestamp: chrono::Local::now().format("%H:%M").to_string(),
+            }
+        ]
+    } else {
+        display_messages
+    };
+
+    let send_custom_message = move |text: String| {
+        let active_id = match active_session_id.read().clone() {
+            Some(id) => id,
+            None => return,
+        };
+
+        let currently_loading = is_loading.read().get(&active_id).copied().unwrap_or(false);
+        if text.is_empty() || currently_loading {
             return;
         }
 
         let mut msg_list = messages;
         let mut loading = is_loading;
-        let mut input = input_text;
         let mut issues_sig = issues;
+        let mut chat_sessions_sig = chat_sessions;
+        let active_id_spawn = active_id.clone();
+        let mut active_session_id_ref = active_session_id;
 
         spawn(async move {
-            msg_list.write().push(ChatMessage {
+            msg_list.write().entry(active_id_spawn.clone()).or_default().push(ChatMessage {
                 is_user: true,
                 text: text.clone(),
                 timestamp: chrono::Local::now().format("%H:%M").to_string(),
             });
-            input.set(String::new());
-            loading.set(true);
+            loading.write().insert(active_id_spawn.clone(), true);
 
-            match crate::send_chat_message(text).await {
-                Ok(reply) => {
-                    msg_list.write().push(ChatMessage {
+            let mut final_id = active_id_spawn.clone();
+            match crate::send_chat_message(active_id_spawn.clone(), text).await {
+                Ok(response) => {
+                    final_id = response.actual_session_id.clone();
+                    
+                    // Session promotion migration inside the HashMap cache
+                    if final_id != active_id_spawn {
+                        let mut map = msg_list;
+                        let draft_history = map.write().remove(&active_id_spawn);
+                        if let Some(draft_history) = draft_history {
+                            map.write().insert(final_id.clone(), draft_history);
+                        }
+                    }
+
+                    if Some(active_id_spawn.clone()) == *active_session_id_ref.read() {
+                        active_session_id_ref.set(Some(response.actual_session_id.clone()));
+                    }
+
+                    msg_list.write().entry(final_id.clone()).or_default().push(ChatMessage {
                         is_user: false,
-                        text: reply,
+                        text: response.reply,
                         timestamp: chrono::Local::now().format("%H:%M").to_string(),
                     });
                     
+                    if let Ok(sessions) = crate::get_chat_sessions().await {
+                        chat_sessions_sig.set(sessions);
+                    }
                     if let Ok(latest_issues) = crate::get_issues().await {
                         issues_sig.set(latest_issues);
                     }
                 }
                 Err(e) => {
-                    msg_list.write().push(ChatMessage {
+                    msg_list.write().entry(active_id_spawn.clone()).or_default().push(ChatMessage {
                         is_user: false,
                         text: format!("⚠️ Error: {}", e),
                         timestamp: chrono::Local::now().format("%H:%M").to_string(),
                     });
                 }
             }
-            loading.set(false);
+            loading.write().insert(active_id_spawn.clone(), false);
+            loading.write().insert(final_id, false);
         });
     };
 
+    let mut send_message = move || {
+        let text = input_text.read().trim().to_string();
+        if !text.is_empty() {
+            send_custom_message(text);
+            input_text.set(String::new());
+        }
+    };
+
     rsx! {
-        div { class: "flex flex-col h-[calc(100vh-12rem)] max-w-4xl mx-auto bg-gradient-to-br from-slate-900/60 to-slate-950/80 border border-slate-800/80 rounded-2xl overflow-hidden shadow-2xl backdrop-blur-md",
+        div { class: "flex h-full w-full bg-gradient-to-br from-slate-900/60 to-slate-950/80 border border-slate-800/80 rounded-2xl overflow-hidden shadow-2xl backdrop-blur-md",
             
-            // Header
-            div { class: "bg-slate-900/90 px-6 py-4 border-b border-slate-800/70 flex items-center justify-between shadow-sm",
-                div { class: "flex items-center gap-3.5",
-                    div { class: "p-2 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-lg shadow-inner",
-                        "✨"
-                    }
-                    div {
-                        h2 { class: "text-sm font-bold text-slate-100 flex items-center gap-2", 
-                            "AI Personal Secretary"
-                            span { class: "text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-300 font-semibold border border-indigo-500/20", "Hermes Mode" }
-                        }
-                        p { class: "text-[10px] text-slate-450 font-medium mt-0.5", "High-autonomy JIT developer assistant & workflow automator" }
-                    }
-                }
+            // Sidebar
+            div { class: "w-64 border-r border-slate-800/70 flex flex-col bg-slate-950/45 shrink-0",
                 
-                div { class: "flex items-center gap-4",
+                // New Chat Button
+                div { class: "p-4 border-b border-slate-800/70",
                     button {
-                        class: "px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-red-950/30 hover:bg-red-950/60 border border-red-900/40 hover:border-red-700/60 text-red-300 transition-all flex items-center gap-1.5 cursor-pointer shadow-md active:scale-95",
+                        class: "w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs transition-all duration-200 flex items-center justify-center gap-2 shadow-lg shadow-indigo-900/30 hover:shadow-indigo-550/30 hover:scale-[1.02] cursor-pointer",
                         onclick: move |_| {
-                            let mut msg_list = messages;
-                            let mut loading = is_loading;
+                            let mut active_sig = active_session_id;
+                            let mut sessions_sig = chat_sessions;
+                            let mut msgs = messages;
                             spawn(async move {
-                                loading.set(true);
-                                match crate::send_chat_message("reset session".to_string()).await {
-                                    Ok(_) => {
-                                        msg_list.set(vec![
-                                            ChatMessage {
-                                                is_user: false,
-                                                text: "Chat session has been reset. The next message will start a new conversation.".to_string(),
-                                                timestamp: chrono::Local::now().format("%H:%M").to_string(),
-                                            }
-                                        ]);
+                                if let Ok(new_id) = crate::create_chat_session().await {
+                                    active_sig.set(Some(new_id.clone()));
+                                    if let Ok(s) = crate::get_chat_sessions().await {
+                                        sessions_sig.set(s);
                                     }
-                                    Err(e) => {
-                                        msg_list.write().push(ChatMessage {
-                                            is_user: false,
-                                            text: format!("⚠️ Error resetting chat: {}", e),
-                                            timestamp: chrono::Local::now().format("%H:%M").to_string(),
-                                        });
-                                    }
+                                    msgs.write().insert(new_id, Vec::new());
                                 }
-                                loading.set(false);
                             });
                         },
-                        span { "🗑️" }
-                        span { "Reset Session" }
+                        span { class: "text-sm", "💬" }
+                        span { "New Chat" }
                     }
-                    div { class: "h-4 w-[1px] bg-slate-800" }
-                    div { class: "flex items-center gap-2",
-                        span { class: "h-2 w-2 rounded-full bg-emerald-500 animate-pulse" }
-                        span { class: "text-[10px] text-slate-400 font-mono", "Online" }
+                }
+
+                // Rooms List
+                div { class: "flex-1 overflow-y-auto p-3 flex flex-col gap-2 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent",
+                    if chat_sessions.read().is_empty() {
+                        div { class: "text-center text-[11px] text-slate-500 py-8 font-medium",
+                            "No active chats"
+                        }
+                    } else {
+                        for session in chat_sessions.read().clone() {
+                            {
+                                let is_active = Some(session.id.clone()) == *active_session_id.read();
+                                let session_id_clone = session.id.clone();
+                                let session_id_delete = session.id.clone();
+                                
+                                let time_display = if session.updated_at.len() >= 16 {
+                                    format!("{} {}", &session.updated_at[5..10], &session.updated_at[11..16])
+                                } else {
+                                    session.updated_at.clone()
+                                };
+
+                                rsx! {
+                                    div {
+                                        class: format!("group relative flex items-center justify-between px-3.5 py-3 rounded-xl border transition-all duration-200 cursor-pointer {}",
+                                            if is_active {
+                                                "bg-indigo-600/10 border-indigo-500/30 text-slate-100 shadow-sm"
+                                            } else {
+                                                "bg-slate-900/10 hover:bg-slate-900/40 border-transparent hover:border-slate-800/50 text-slate-400 hover:text-slate-200"
+                                            }
+                                        ),
+                                        onclick: move |_| {
+                                            let s_id = session_id_clone.clone();
+                                            let mut active_sig = active_session_id;
+                                            let mut msgs = messages;
+                                            spawn(async move {
+                                                let _ = crate::set_active_session_id(s_id.clone()).await;
+                                                active_sig.set(Some(s_id.clone()));
+                                                
+                                                let has_cache = msgs.read().contains_key(&s_id);
+                                                if !has_cache {
+                                                    if let Ok(history) = crate::get_chat_history(s_id.clone()).await {
+                                                        msgs.write().insert(s_id, history);
+                                                    }
+                                                }
+                                            });
+                                        },
+                                        
+                                        div { class: "flex-1 min-w-0 pr-2",
+                                            h3 { class: "text-xs font-semibold truncate", "{session.title}" }
+                                            p { class: "text-[9px] text-slate-500 font-mono mt-0.5", "{time_display}" }
+                                        }
+
+                                        button {
+                                            class: "p-1.5 rounded-lg bg-red-950/20 hover:bg-red-900/40 border border-red-900/20 hover:border-red-700/40 text-red-400 transition-all cursor-pointer opacity-0 group-hover:opacity-100 focus:opacity-100 active:scale-90",
+                                            title: "Delete chat room",
+                                            onclick: move |evt| {
+                                                evt.stop_propagation();
+                                                let s_id = session_id_delete.clone();
+                                                let mut active_sig = active_session_id;
+                                                let mut sessions_sig = chat_sessions;
+                                                let mut msgs = messages;
+                                                spawn(async move {
+                                                    let mut eval_confirm = eval("dioxus.send(confirm('이 대화방을 정말로 삭제하시겠습니까?'));");
+                                                    let confirmed = eval_confirm.recv::<bool>().await.unwrap_or(false);
+                                                    if !confirmed {
+                                                        return;
+                                                    }
+                                                    if crate::delete_chat_session(s_id.clone()).await.is_ok() {
+                                                        msgs.write().remove(&s_id);
+                                                        if let Ok(s) = crate::get_chat_sessions().await {
+                                                            sessions_sig.set(s);
+                                                        }
+                                                        match crate::get_active_session_id().await {
+                                                            Ok(Some(active_id)) => {
+                                                                active_sig.set(Some(active_id.clone()));
+                                                                let has_cache = msgs.read().contains_key(&active_id);
+                                                                if !has_cache {
+                                                                    if let Ok(history) = crate::get_chat_history(active_id.clone()).await {
+                                                                        msgs.write().insert(active_id, history);
+                                                                    }
+                                                                }
+                                                            }
+                                                            Ok(None) | Err(_) => {
+                                                                active_sig.set(None);
+                                                            }
+                                                        }
+                                                    }
+                                                });
+                                            },
+                                            svg { class: "w-3.5 h-3.5", fill: "none", stroke: "currentColor", stroke_width: "2", view_box: "0 0 24 24",
+                                                path { stroke_linecap: "round", stroke_linejoin: "round", d: "M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
 
-            // Message Stream Area
-            div { class: "flex-1 overflow-y-auto p-6 flex flex-col gap-6 bg-slate-950/30",
-                for msg in messages.read().iter() {
-                    div {
-                        class: format!("flex gap-3.5 max-w-[85%] {}", if msg.is_user { "self-end flex-row-reverse" } else { "self-start" }),
-                        
-                        // Avatar
-                        if msg.is_user {
-                            div { class: "w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-600 to-violet-600 flex items-center justify-center text-white text-xs font-bold border border-indigo-400/20 shadow-md flex-shrink-0",
-                                svg { class: "w-4 h-4", fill: "currentColor", view_box: "0 0 20 20",
-                                    path { fill_rule: "evenodd", d: "M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z", clip_rule: "evenodd" }
+            // Right pane
+            div { class: "flex-1 flex flex-col overflow-hidden relative bg-slate-950/20",
+                if let Some(active_id) = active_session_id.read().clone() {
+                    div { class: "flex-1 flex flex-col overflow-hidden",
+                        // Header
+                        div { class: "bg-slate-900/90 px-6 py-4 border-b border-slate-800/70 flex items-center justify-between shadow-sm shrink-0",
+                            div { class: "flex items-center gap-3.5 min-w-0 flex-1",
+                                div { class: "p-2 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-lg shadow-inner shrink-0",
+                                    "✨"
+                                }
+                                div { class: "min-w-0",
+                                    h2 { class: "text-sm font-bold text-slate-100 flex items-center gap-2 truncate",
+                                        "{current_session_title}"
+                                        span { class: "text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-300 font-semibold border border-indigo-500/20 shrink-0", "Hermes Mode" }
+                                    }
+                                    p { class: "text-[10px] text-slate-450 font-medium mt-0.5 truncate", "Active Room ID: {active_id}" }
                                 }
                             }
-                        } else {
-                            div { class: "w-8 h-8 rounded-full bg-gradient-to-tr from-slate-850 to-indigo-950 flex items-center justify-center text-indigo-400 text-xs border border-indigo-500/20 shadow-md flex-shrink-0",
-                                svg { class: "w-4.5 h-4.5 text-indigo-400", fill: "none", stroke: "currentColor", stroke_width: "2", view_box: "0 0 24 24",
-                                    path { stroke_linecap: "round", stroke_linejoin: "round", d: "M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" }
+                            
+                            div { class: "flex items-center gap-4 shrink-0",
+                                button {
+                                    class: "px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-red-950/30 hover:bg-red-950/60 border border-red-900/40 hover:border-red-700/60 text-red-300 transition-all flex items-center gap-1.5 cursor-pointer shadow-md active:scale-95",
+                                    onclick: move |_| {
+                                        let mut msg_list = messages;
+                                        let mut loading = is_loading;
+                                        let active_id_reset = active_id.clone();
+                                        spawn(async move {
+                                            loading.write().insert(active_id_reset.clone(), true);
+                                            match crate::send_chat_message(active_id_reset.clone(), "reset session".to_string()).await {
+                                                Ok(_) => {
+                                                    msg_list.write().insert(active_id_reset.clone(), vec![
+                                                        ChatMessage {
+                                                            is_user: false,
+                                                            text: "Chat session has been reset. The next message will start a new conversation.".to_string(),
+                                                            timestamp: chrono::Local::now().format("%H:%M").to_string(),
+                                                        }
+                                                    ]);
+                                                }
+                                                Err(e) => {
+                                                    msg_list.write().entry(active_id_reset.clone()).or_default().push(ChatMessage {
+                                                        is_user: false,
+                                                        text: format!("⚠️ Error resetting chat: {}", e),
+                                                        timestamp: chrono::Local::now().format("%H:%M").to_string(),
+                                                    });
+                                                }
+                                            }
+                                            loading.write().insert(active_id_reset.clone(), false);
+                                        });
+                                    },
+                                    span { "🗑️" }
+                                    span { "Reset Session" }
+                                }
+                                div { class: "h-4 w-[1px] bg-slate-800" }
+                                div { class: "flex items-center gap-2",
+                                    span { class: "h-2 w-2 rounded-full bg-emerald-500 animate-pulse" }
+                                    span { class: "text-[10px] text-slate-400 font-mono", "Online" }
                                 }
                             }
                         }
 
-                        // Bubble Body
-                        div { class: "flex flex-col",
-                            div {
-                                class: format!("px-4.5 py-3.5 rounded-2xl shadow-lg border text-slate-100 transition-all {}",
+                        // Message Stream Area
+                        div {
+                            id: "chat-messages-container",
+                            class: "flex-1 overflow-y-auto p-6 flex flex-col gap-6 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent",
+                            for msg in display_messages.iter() {
+                                div {
+                                    class: format!("flex gap-3.5 max-w-[85%] {}", if msg.is_user { "self-end flex-row-reverse" } else { "self-start" }),
+                                    
                                     if msg.is_user {
-                                        "bg-gradient-to-br from-indigo-600 to-indigo-700 border-indigo-500/40 rounded-tr-none text-white"
+                                        div { class: "w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-600 to-violet-600 flex items-center justify-center text-white text-xs font-bold border border-indigo-400/20 shadow-md flex-shrink-0",
+                                            svg { class: "w-4 h-4", fill: "currentColor", view_box: "0 0 20 20",
+                                                path { fill_rule: "evenodd", d: "M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z", clip_rule: "evenodd" }
+                                            }
+                                        }
                                     } else {
-                                        "bg-slate-900/70 border-slate-800/80 rounded-tl-none"
+                                        div { class: "w-8 h-8 rounded-full bg-gradient-to-tr from-slate-850 to-indigo-950 flex items-center justify-center text-indigo-400 text-xs border border-indigo-500/20 shadow-md flex-shrink-0",
+                                            svg { class: "w-4.5 h-4.5 text-indigo-400", fill: "none", stroke: "currentColor", stroke_width: "2", view_box: "0 0 24 24",
+                                                path { stroke_linecap: "round", stroke_linejoin: "round", d: "M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" }
+                                            }
+                                        }
+                                    }
+
+                                    div { class: "flex flex-col",
+                                        div {
+                                            class: format!("px-4.5 py-3.5 rounded-2xl shadow-lg border text-slate-100 transition-all {}",
+                                                if msg.is_user {
+                                                    "bg-gradient-to-br from-indigo-600 to-indigo-700 border-indigo-500/40 rounded-tr-none text-white"
+                                                } else {
+                                                    "bg-slate-900/70 border-slate-800/80 rounded-tl-none"
+                                                }
+                                            ),
+                                            {
+                                                if msg.is_user {
+                                                    let display_text = if msg.text == "agy-orchestrator info" || msg.text == "env -u PORT -u ADDR -u IP /home/wimvm/.local/bin/agy-orchestrator info" || msg.text == "/home/wimvm/.local/bin/agy-orchestrator info" {
+                                                        "📋 System Info".to_string()
+                                                    } else if msg.text == "agy-orchestrator list" || msg.text == "env -u PORT -u ADDR -u IP agy-orchestrator list" {
+                                                        "🔍 List Projects".to_string()
+                                                    } else if msg.text == "agy-orchestrator issue --list" {
+                                                        "🐛 Active Issues".to_string()
+                                                    } else {
+                                                        msg.text.clone()
+                                                    };
+                                                    rsx! { p { class: "text-sm leading-relaxed", "{display_text}" } }
+                                                } else {
+                                                    render_markdown(&msg.text)
+                                                }
+                                            }
+                                        }
+                                        span { class: format!("text-[9px] text-slate-500 mt-1.5 font-mono px-1 {}", if msg.is_user { "text-right" } else { "text-left" }), "{msg.timestamp}" }
+                                    }
+                                }
+                            }
+
+                            if active_loading {
+                                div { class: "self-start flex gap-3.5 max-w-[85%]",
+                                    div { class: "w-8 h-8 rounded-full bg-gradient-to-tr from-slate-850 to-indigo-950 flex items-center justify-center text-indigo-400 border border-indigo-500/20 shadow flex-shrink-0",
+                                        svg { class: "w-4.5 h-4.5 text-indigo-400 animate-pulse", fill: "none", stroke: "currentColor", stroke_width: "2", view_box: "0 0 24 24",
+                                            path { stroke_linecap: "round", stroke_linejoin: "round", d: "M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" }
+                                        }
+                                    }
+                                    div { class: "flex items-center gap-1.5 bg-slate-900/50 border border-slate-800/80 px-4 py-3.5 rounded-2xl rounded-tl-none shadow-md",
+                                        div { class: "h-2 w-2 bg-indigo-450 rounded-full animate-bounce [animation-duration:1s]" }
+                                        div { class: "h-2 w-2 bg-indigo-450 rounded-full animate-bounce [animation-duration:1s] [animation-delay:0.2s]" }
+                                        div { class: "h-2 w-2 bg-indigo-450 rounded-full animate-bounce [animation-duration:1s] [animation-delay:0.4s]" }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Quick Actions Bar
+                        div { class: "px-6 py-3.5 bg-slate-900/30 border-t border-slate-850/80 flex flex-wrap gap-2.5 items-center backdrop-blur-sm shrink-0",
+                            span { class: "text-[9px] text-slate-450 uppercase tracking-widest font-bold mr-1.5", "JIT Commands" }
+                            
+                            button {
+                                class: "px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-850 hover:bg-indigo-950/40 hover:text-indigo-300 border border-slate-800 hover:border-indigo-800/50 transition-all duration-200 cursor-pointer flex items-center gap-1.5 active:scale-95 shadow-sm text-slate-300",
+                                onclick: move |_| {
+                                    send_custom_message("agy-orchestrator info".to_string());
+                                },
+                                span { "🗼" }
+                                span { "System Info" }
+                            }
+                            button {
+                                class: "px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-850 hover:bg-indigo-950/40 hover:text-indigo-300 border border-slate-800 hover:border-indigo-800/50 transition-all duration-200 cursor-pointer flex items-center gap-1.5 active:scale-95 shadow-sm text-slate-300",
+                                onclick: move |_| {
+                                    send_custom_message("agy-orchestrator list".to_string());
+                                },
+                                span { "📋" }
+                                span { "List Projects" }
+                            }
+                            button {
+                                class: "px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-850 hover:bg-indigo-950/40 hover:text-indigo-300 border border-slate-800 hover:border-indigo-800/50 transition-all duration-200 cursor-pointer flex items-center gap-1.5 active:scale-95 shadow-sm text-slate-300",
+                                onclick: move |_| {
+                                    send_custom_message("agy-orchestrator issue --list".to_string());
+                                },
+                                span { "🐛" }
+                                span { "Active Issues" }
+                            }
+                            button {
+                                class: "px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-850 hover:bg-indigo-950/40 hover:text-indigo-300 border border-slate-800 hover:border-indigo-800/50 transition-all duration-200 cursor-pointer flex items-center gap-1.5 active:scale-95 shadow-sm text-slate-300",
+                                onclick: move |_| {
+                                    input_text.set("create task: ".to_string());
+                                },
+                                span { "➕" }
+                                span { "Create Task" }
+                            }
+                        }
+
+                        // Input Bar
+                        div { class: "bg-slate-900/60 border-t border-slate-850/80 p-4.5 flex gap-3 items-center backdrop-blur-md shrink-0",
+                            input {
+                                id: "chat-input-field",
+                                class: "flex-1 bg-slate-950 border border-slate-850 rounded-xl px-4.5 py-3 text-sm text-slate-200 placeholder:text-slate-550 focus:outline-none focus:border-indigo-500/60 focus:ring-1 focus:ring-indigo-500/20 transition-all shadow-inner",
+                                placeholder: "Ask your JIT secretary a question or command...",
+                                value: "{input_text}",
+                                oninput: move |evt| input_text.set(evt.value()),
+                                onkeydown: move |evt| {
+                                    if evt.key() == Key::Enter {
+                                        send_message();
+                                    }
+                                }
+                            }
+                            button {
+                                class: format!("px-5.5 py-3.5 rounded-xl font-bold text-sm transition-all duration-250 active:scale-95 flex items-center gap-2 cursor-pointer shadow-lg {}",
+                                    if active_loading {
+                                        "bg-slate-800 text-slate-500 border border-slate-750"
+                                    } else {
+                                        "bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-900/30 hover:shadow-indigo-550/30 hover:shadow-xl"
                                     }
                                 ),
-                                {
-                                    if msg.is_user {
-                                        rsx! { p { class: "text-sm leading-relaxed", "{msg.text}" } }
-                                    } else {
-                                        render_markdown(&msg.text)
+                                onclick: move |_| send_message(),
+                                disabled: active_loading,
+                                span { "Send" }
+                                span { class: "text-[12px]", "➔" }
+                            }
+                        }
+                    }
+                } else {
+                    // Empty State View when no chat room is selected
+                    div { class: "flex-1 flex flex-col items-center justify-center p-8 text-center gap-6",
+                        div { class: "p-4.5 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-3xl shadow-inner animate-pulse",
+                            "✨"
+                        }
+                        div {
+                            h2 { class: "text-md font-bold text-slate-100", "AI Orchestrator Secretary" }
+                            p { class: "text-xs text-slate-450 max-w-sm mt-2 leading-relaxed",
+                                "Manage your workflows, projects, and autonomous coding assistants in a Just-in-Time manner. Select a chat session room or start a fresh one to begin."
+                            }
+                        }
+                        button {
+                            class: "py-2.5 px-5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs transition-all duration-250 flex items-center gap-2 shadow-lg shadow-indigo-900/30 hover:shadow-indigo-550/30 active:scale-95 cursor-pointer",
+                            onclick: move |_| {
+                                let mut active_sig = active_session_id;
+                                let mut sessions_sig = chat_sessions;
+                                let mut msgs = messages;
+                                spawn(async move {
+                                    if let Ok(new_id) = crate::create_chat_session().await {
+                                        active_sig.set(Some(new_id.clone()));
+                                        if let Ok(s) = crate::get_chat_sessions().await {
+                                            sessions_sig.set(s);
+                                        }
+                                        msgs.write().insert(new_id, Vec::new());
                                     }
-                                }
-                            }
-                            span { class: format!("text-[9px] text-slate-500 mt-1.5 font-mono px-1 {}", if msg.is_user { "text-right" } else { "text-left" }), "{msg.timestamp}" }
+                                });
+                            },
+                            span { class: "text-sm", "💬" }
+                            span { "Create First Chat" }
                         }
                     }
-                }
-
-                if *is_loading.read() {
-                    div { class: "self-start flex gap-3.5 max-w-[85%]",
-                        div { class: "w-8 h-8 rounded-full bg-gradient-to-tr from-slate-850 to-indigo-950 flex items-center justify-center text-indigo-400 border border-indigo-500/20 shadow flex-shrink-0",
-                            svg { class: "w-4.5 h-4.5 text-indigo-400 animate-pulse", fill: "none", stroke: "currentColor", stroke_width: "2", view_box: "0 0 24 24",
-                                path { stroke_linecap: "round", stroke_linejoin: "round", d: "M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" }
-                            }
-                        }
-                        div { class: "flex items-center gap-1.5 bg-slate-900/50 border border-slate-800/80 px-4 py-3.5 rounded-2xl rounded-tl-none shadow-md",
-                            div { class: "h-2 w-2 bg-indigo-450 rounded-full animate-bounce [animation-duration:1s]" }
-                            div { class: "h-2 w-2 bg-indigo-450 rounded-full animate-bounce [animation-duration:1s] [animation-delay:0.2s]" }
-                            div { class: "h-2 w-2 bg-indigo-450 rounded-full animate-bounce [animation-duration:1s] [animation-delay:0.4s]" }
-                        }
-                    }
-                }
-            }
-
-            // Quick Actions Bar
-            div { class: "px-6 py-3.5 bg-slate-900/30 border-t border-slate-850/80 flex flex-wrap gap-2.5 items-center backdrop-blur-sm",
-                span { class: "text-[9px] text-slate-450 uppercase tracking-widest font-bold mr-1.5", "JIT Commands" }
-                
-                button {
-                    class: "px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-850 hover:bg-indigo-950/40 hover:text-indigo-300 border border-slate-800 hover:border-indigo-800/50 transition-all duration-200 cursor-pointer flex items-center gap-1.5 active:scale-95 shadow-sm text-slate-300",
-                    onclick: move |_| {
-                        input_text.set("/home/wimvm/.local/bin/agy-orchestrator info".to_string());
-                        send_message();
-                    },
-                    span { "🗼" }
-                    span { "System Info" }
-                }
-                button {
-                    class: "px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-850 hover:bg-indigo-950/40 hover:text-indigo-300 border border-slate-800 hover:border-indigo-800/50 transition-all duration-200 cursor-pointer flex items-center gap-1.5 active:scale-95 shadow-sm text-slate-300",
-                    onclick: move |_| {
-                        input_text.set("env -u PORT -u ADDR -u IP agy-orchestrator list".to_string());
-                        send_message();
-                    },
-                    span { "📋" }
-                    span { "List Projects" }
-                }
-                button {
-                    class: "px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-850 hover:bg-indigo-950/40 hover:text-indigo-300 border border-slate-800 hover:border-indigo-800/50 transition-all duration-200 cursor-pointer flex items-center gap-1.5 active:scale-95 shadow-sm text-slate-300",
-                    onclick: move |_| {
-                        input_text.set("agy-orchestrator issue --list".to_string());
-                        send_message();
-                    },
-                    span { "🐛" }
-                    span { "Active Issues" }
-                }
-                button {
-                    class: "px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-850 hover:bg-indigo-950/40 hover:text-indigo-300 border border-slate-800 hover:border-indigo-800/50 transition-all duration-200 cursor-pointer flex items-center gap-1.5 active:scale-95 shadow-sm text-slate-300",
-                    onclick: move |_| {
-                        input_text.set("create task: ".to_string());
-                    },
-                    span { "➕" }
-                    span { "Create Task" }
-                }
-            }
-
-            // Input Bar
-            div { class: "bg-slate-900/60 border-t border-slate-850/80 p-4.5 flex gap-3 items-center backdrop-blur-md",
-                input {
-                    class: "flex-1 bg-slate-950 border border-slate-850 rounded-xl px-4.5 py-3 text-sm text-slate-200 placeholder:text-slate-550 focus:outline-none focus:border-indigo-500/60 focus:ring-1 focus:ring-indigo-500/20 transition-all shadow-inner",
-                    placeholder: "Ask your JIT secretary a question or command...",
-                    value: "{input_text}",
-                    oninput: move |evt| input_text.set(evt.value()),
-                    onkeydown: move |evt| {
-                        if evt.key() == Key::Enter {
-                            send_message();
-                        }
-                    }
-                }
-                button {
-                    class: format!("px-5.5 py-3.5 rounded-xl font-bold text-sm transition-all duration-250 active:scale-95 flex items-center gap-2 cursor-pointer shadow-lg {}",
-                        if *is_loading.read() {
-                            "bg-slate-800 text-slate-500 border border-slate-750"
-                        } else {
-                            "bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-900/30 hover:shadow-indigo-550/30 hover:shadow-xl"
-                        }
-                    ),
-                    onclick: move |_| send_message(),
-                    disabled: *is_loading.read(),
-                    span { "Send" }
-                    span { class: "text-[12px]", "➔" }
                 }
             }
         }

@@ -262,6 +262,298 @@ async fn get_upgrade_status() -> Result<Option<(String, String)>, ServerFnError>
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
+fn load_chat_sessions() -> Result<Vec<crate::frontend::app::ChatSession>, String> {
+    let base_dir = backend::vault::get_base_dir();
+    let sessions_path = base_dir.join("chat_sessions.json");
+    if !sessions_path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = std::fs::read_to_string(&sessions_path).map_err(|e| e.to_string())?;
+    let mut sessions: Vec<crate::frontend::app::ChatSession> = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    
+    let mut seen = std::collections::HashSet::new();
+    sessions.retain(|s| seen.insert(s.id.clone()));
+    
+    Ok(sessions)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
+fn save_chat_sessions(sessions: &[crate::frontend::app::ChatSession]) -> Result<(), String> {
+    let base_dir = backend::vault::get_base_dir();
+    let sessions_path = base_dir.join("chat_sessions.json");
+    let content = serde_json::to_string_pretty(sessions).map_err(|e| e.to_string())?;
+    std::fs::write(&sessions_path, content).map_err(|e| e.to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
+fn get_brain_sessions() -> std::collections::HashSet<String> {
+    let mut dirs = std::collections::HashSet::new();
+    if let Ok(entries) = std::fs::read_dir("/home/wimvm/.gemini/antigravity-cli/brain") {
+        for entry in entries.flatten() {
+            if let Ok(meta) = entry.metadata() {
+                if meta.is_dir() {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    if !name.starts_with("draft-") {
+                        dirs.insert(name);
+                    }
+                }
+            }
+        }
+    }
+    dirs
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
+fn find_newest_brain_session(diff: &std::collections::HashSet<String>) -> Option<String> {
+    let mut newest_name = None;
+    let mut newest_time = std::time::SystemTime::UNIX_EPOCH;
+    for name in diff {
+        let path = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(name);
+        if let Ok(meta) = std::fs::metadata(path) {
+            if let Ok(modified) = meta.modified() {
+                if modified > newest_time {
+                    newest_time = modified;
+                    newest_name = Some(name.clone());
+                }
+            }
+        }
+    }
+    newest_name
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
+fn uuid_v4_fallback() -> String {
+    if let Ok(uuid) = std::fs::read_to_string("/proc/sys/kernel/random/uuid") {
+        uuid.trim().to_string()
+    } else {
+        let ts = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        format!("session-{}", ts)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
+fn check_and_rename_session(session_id: &str, first_msg: &str) -> Result<(), String> {
+    let mut sessions = load_chat_sessions()?;
+    if let Some(session) = sessions.iter_mut().find(|s| s.id == session_id) {
+        if session.title == "New Chat" {
+            let mut title = first_msg.trim().to_string();
+            if title.len() > 30 {
+                title = format!("{}...", &title[..28]);
+            }
+            session.title = title;
+            session.updated_at = chrono::Local::now().to_rfc3339();
+            save_chat_sessions(&sessions)?;
+        } else {
+            session.updated_at = chrono::Local::now().to_rfc3339();
+            save_chat_sessions(&sessions)?;
+        }
+    }
+    Ok(())
+}
+
+#[server]
+async fn get_chat_history(session_id: String) -> Result<Vec<crate::frontend::app::ChatMessage>, ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use crate::frontend::app::ChatMessage;
+        if session_id.is_empty() || session_id.starts_with("draft-") {
+            return Ok(Vec::new());
+        }
+
+        let transcript_path = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain/")
+            .join(&session_id)
+            .join(".system_generated/logs/transcript_full.jsonl");
+
+        if !transcript_path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let file_content = std::fs::read_to_string(&transcript_path)
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        let mut history = Vec::new();
+        for line in file_content.lines() {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
+                let source = json["source"].as_str().unwrap_or("");
+                let msg_type = json["type"].as_str().unwrap_or("");
+                let content = json["content"].as_str().unwrap_or("");
+
+                let timestamp = if let Some(ts_str) = json["created_at"].as_str() {
+                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts_str) {
+                        dt.with_timezone(&chrono::Local).format("%H:%M").to_string()
+                    } else {
+                        chrono::Local::now().format("%H:%M").to_string()
+                    }
+                } else {
+                    chrono::Local::now().format("%H:%M").to_string()
+                };
+
+                if msg_type == "USER_INPUT" {
+                    let mut text = content.to_string();
+                    if let Some(user_msg_idx) = text.find("User Message:") {
+                        let after_prefix = &text[user_msg_idx + "User Message:".len()..];
+                        if let Some(end_req_idx) = after_prefix.find("</USER_REQUEST>") {
+                            text = after_prefix[..end_req_idx].trim().to_string();
+                        } else {
+                            text = after_prefix.trim().to_string();
+                        }
+                    } else {
+                        if text.starts_with("<USER_REQUEST>") {
+                            text = text.replace("<USER_REQUEST>", "").replace("</USER_REQUEST>", "").trim().to_string();
+                        }
+                    }
+                    history.push(ChatMessage {
+                        is_user: true,
+                        text,
+                        timestamp,
+                    });
+                } else if source == "MODEL" && msg_type == "PLANNER_RESPONSE" {
+                    let mut text = content.to_string();
+                    if let Some(start_idx) = text.find("[CREATE_TASK:") {
+                        if let Some(end_idx) = text[start_idx..].find(']') {
+                            let full_tag = &text[start_idx..start_idx + end_idx + 1];
+                            text = text.replace(full_tag, "").trim().to_string();
+                        }
+                    }
+                    history.push(ChatMessage {
+                        is_user: false,
+                        text,
+                        timestamp,
+                    });
+                }
+            }
+        }
+        Ok(history)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
+}
+
+#[server]
+async fn get_chat_sessions() -> Result<Vec<crate::frontend::app::ChatSession>, ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        load_chat_sessions().map_err(|e| ServerFnError::new(e))
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
+static DRAFT_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+#[server]
+async fn create_chat_session() -> Result<String, ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let ts = chrono::Utc::now().timestamp_millis();
+        let count = DRAFT_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let id = format!("draft-{}-{}", ts, count);
+        let timestamp = chrono::Local::now().to_rfc3339();
+        let new_session = crate::frontend::app::ChatSession {
+            id: id.clone(),
+            title: "New Chat".to_string(),
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+        };
+        
+        let mut sessions = load_chat_sessions().unwrap_or_default();
+        sessions.push(new_session);
+        save_chat_sessions(&sessions).map_err(|e| ServerFnError::new(e))?;
+        
+        let base_dir = backend::vault::get_base_dir();
+        let _ = std::fs::write(base_dir.join("active_chat_session_id.txt"), &id);
+        
+        Ok(id)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
+}
+
+#[server]
+async fn delete_chat_session(id: String) -> Result<(), ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut sessions = load_chat_sessions().unwrap_or_default();
+        sessions.retain(|s| s.id != id);
+        save_chat_sessions(&sessions).map_err(|e| ServerFnError::new(e))?;
+        
+        let brain_dir = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(&id);
+        if brain_dir.exists() {
+            let _ = std::fs::remove_dir_all(brain_dir);
+        }
+        
+        let base_dir = backend::vault::get_base_dir();
+        let active_path = base_dir.join("active_chat_session_id.txt");
+        if active_path.exists() {
+            if let Ok(active_id) = std::fs::read_to_string(&active_path) {
+                if active_id.trim() == id {
+                    let _ = std::fs::remove_file(&active_path);
+                }
+            }
+        }
+        Ok(())
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
+}
+
+#[server]
+async fn get_active_session_id() -> Result<Option<String>, ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let base_dir = backend::vault::get_base_dir();
+        let active_path = base_dir.join("active_chat_session_id.txt");
+        if !active_path.exists() {
+            return Ok(None);
+        }
+        let id = std::fs::read_to_string(active_path)
+            .map_err(|e| ServerFnError::new(e.to_string()))?
+            .trim()
+            .to_string();
+        if id.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(id))
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
+}
+
+#[server]
+async fn set_active_session_id(id: String) -> Result<(), ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let base_dir = backend::vault::get_base_dir();
+        let active_path = base_dir.join("active_chat_session_id.txt");
+        std::fs::write(active_path, id.trim()).map_err(|e| ServerFnError::new(e.to_string()))?;
+        Ok(())
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
+}
+
 #[server]
 async fn trigger_remote_upgrade(download_url: String) -> Result<(), ServerFnError> {
     #[cfg(not(target_arch = "wasm32"))]
@@ -372,17 +664,135 @@ async fn run_evolution_harness_fn(id: u32) -> Result<(), ServerFnError> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
+fn promote_session_if_draft(session_id: &str) -> String {
+    if session_id.starts_with("draft-") {
+        let ts = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let new_uuid = format!("session-{}", ts);
+        
+        if let Ok(mut sessions) = load_chat_sessions() {
+            if let Some(session) = sessions.iter_mut().find(|s| s.id == session_id) {
+                session.id = new_uuid.clone();
+            }
+            let _ = save_chat_sessions(&sessions);
+        }
+        let base_dir = backend::vault::get_base_dir();
+        let _ = std::fs::write(base_dir.join("active_chat_session_id.txt"), &new_uuid);
+        new_uuid
+    } else {
+        session_id.to_string()
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
+fn append_mock_transcript_line(session_id: &str, msg_type: &str, content: &str) -> Result<(), String> {
+    let actual_id = promote_session_if_draft(session_id);
+
+    let brain_dir = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(&actual_id);
+    let logs_dir = brain_dir.join(".system_generated/logs");
+    let _ = std::fs::create_dir_all(&logs_dir);
+    let transcript_path = logs_dir.join("transcript_full.jsonl");
+
+    let timestamp = chrono::Local::now().to_rfc3339();
+    let source = if msg_type == "USER_INPUT" { "USER_EXPLICIT" } else { "MODEL" };
+    
+    let line_data = serde_json::json!({
+        "source": source,
+        "type": msg_type,
+        "content": content,
+        "created_at": timestamp
+    });
+
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&transcript_path)
+        .map_err(|e| e.to_string())?;
+        
+    writeln!(file, "{}", line_data).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+pub struct ChatResponse {
+    pub reply: String,
+    pub actual_session_id: String,
+}
+
 #[server]
-#[server]
-async fn send_chat_message(message: String) -> Result<String, ServerFnError> {
+async fn send_chat_message(session_id: String, message: String) -> Result<ChatResponse, ServerFnError> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let msg_trimmed = message.trim();
         if msg_trimmed.is_empty() {
-            return Ok("Please enter a non-empty message.".to_string());
+            return Ok(ChatResponse {
+                reply: "Please enter a non-empty message.".to_string(),
+                actual_session_id: session_id,
+            });
+        }
+        if session_id.is_empty() {
+            return Err(ServerFnError::new("No active session ID provided"));
         }
 
+        let actual_session_id = promote_session_if_draft(&session_id);
         let lower_msg = msg_trimmed.to_lowercase();
+
+        // Short-circuit: direct agy-orchestrator commands execution
+        if lower_msg.contains("agy-orchestrator") {
+            let cmd_parts: Vec<&str> = msg_trimmed.split_whitespace().collect();
+            if !cmd_parts.is_empty() {
+                let mut args = Vec::new();
+                let mut found_bin = false;
+                for part in cmd_parts {
+                    if found_bin {
+                        args.push(part);
+                    } else if part.contains("agy-orchestrator") {
+                        found_bin = true;
+                    }
+                }
+                
+                let mut exec_cmd = std::process::Command::new("/home/wimvm/.local/bin/agy-orchestrator");
+                exec_cmd.args(&args);
+                exec_cmd.env_remove("PORT");
+                exec_cmd.env_remove("ADDR");
+                exec_cmd.env_remove("IP");
+                
+                if let Ok(cmd_out) = exec_cmd.output() {
+                    let stdout_str = String::from_utf8_lossy(&cmd_out.stdout).to_string();
+                    let stderr_str = String::from_utf8_lossy(&cmd_out.stderr).to_string();
+                    
+                    let mut reply = String::new();
+                    if !stdout_str.is_empty() {
+                        reply.push_str("```\n");
+                        reply.push_str(&stdout_str);
+                        reply.push_str("\n```");
+                    }
+                    if !stderr_str.is_empty() {
+                        if !reply.is_empty() {
+                            reply.push_str("\n\n");
+                        }
+                        reply.push_str("⚠️ **Stderr Output**:\n```\n");
+                        reply.push_str(&stderr_str);
+                        reply.push_str("\n```");
+                    }
+                    if reply.is_empty() {
+                        reply = "Command executed successfully with no output.".to_string();
+                    }
+                    
+                    let _ = append_mock_transcript_line(&actual_session_id, "USER_INPUT", msg_trimmed);
+                    let _ = append_mock_transcript_line(&actual_session_id, "PLANNER_RESPONSE", &reply);
+                    
+                    return Ok(ChatResponse {
+                        reply,
+                        actual_session_id,
+                    });
+                }
+            }
+        }
+
         if lower_msg.starts_with("create task:") || lower_msg.starts_with("add task:") || lower_msg.starts_with("new task:") {
             let prefix_len = if lower_msg.starts_with("create task:") {
                 "create task:".len()
@@ -393,7 +803,10 @@ async fn send_chat_message(message: String) -> Result<String, ServerFnError> {
             };
             let title = msg_trimmed[prefix_len..].trim().to_string();
             if title.is_empty() {
-                return Ok("Please specify a task title (e.g. `create task: Fix layout`).".to_string());
+                return Ok(ChatResponse {
+                    reply: "Please specify a task title (e.g. `create task: Fix layout`).".to_string(),
+                    actual_session_id,
+                });
             }
 
             let mut issues = backend::issue::load_issues();
@@ -407,40 +820,89 @@ async fn send_chat_message(message: String) -> Result<String, ServerFnError> {
                 resolved_at: None,
             });
             backend::issue::save_issues(&issues).map_err(|e| ServerFnError::new(e.to_string()))?;
-            return Ok(format!("I have automatically created the task: **{}** (#{})! You can find it on your Kanban board.", title, next_id));
+            
+            let _ = check_and_rename_session(&actual_session_id, &format!("Create Task: {}", title));
+
+            return Ok(ChatResponse {
+                reply: format!("I have automatically created the task: **{}** (#{})! You can find it on your Kanban board.", title, next_id),
+                actual_session_id,
+            });
         }
 
         if lower_msg == "help" {
-            return Ok("I am your AGY Orchestrator Assistant! Here are the commands you can use:\n\n- **create task: [Title]** - Automate task creation.\n- **add task: [Title]** - Automate task creation.\n- **reset session** / **reset chat** - Reset conversation history.\n\nType conversational requests like *'I need to fix X'* to talk to the AI (runs using `agy` command).".to_string());
+            return Ok(ChatResponse {
+                reply: "I am your AGY Orchestrator Assistant! Here are the commands you can use:\n\n- **create task: [Title]** - Automate task creation.\n- **add task: [Title]** - Automate task creation.\n- **reset session** / **reset chat** - Reset conversation history.\n\nType conversational requests like *'I need to fix X'* to talk to the AI (runs using `agy` command).".to_string(),
+                actual_session_id,
+            });
         }
 
         if lower_msg == "clear session" || lower_msg == "reset session" || lower_msg == "reset chat" {
-            let base_dir = backend::vault::get_base_dir();
-            let chat_id_path = base_dir.join("chat_conversation_id.txt");
-            let _ = std::fs::remove_file(chat_id_path);
-            return Ok("Chat session has been reset. The next message will start a new conversation.".to_string());
+            let brain_dir = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(&actual_session_id);
+            if brain_dir.exists() {
+                let _ = std::fs::remove_dir_all(brain_dir);
+            }
+            return Ok(ChatResponse {
+                reply: "This chat session has been reset. The next message will start a new conversation.".to_string(),
+                actual_session_id,
+            });
         }
 
-        let global_instr_path = backend::vault::get_base_dir().join("memory/system_instructions.md");
-        let global_instr = std::fs::read_to_string(global_instr_path).unwrap_or_default();
+        // Check if simple chat
+        let is_simple_chat = {
+            let lower = msg_trimmed.to_lowercase();
+            let is_short = msg_trimmed.chars().count() < 40;
+            
+            let has_orchestration_keywords = 
+                lower.contains("task") || 
+                lower.contains("issue") || 
+                lower.contains("project") || 
+                lower.contains("status") || 
+                lower.contains("health") || 
+                lower.contains("upgrade") || 
+                lower.contains("update") || 
+                lower.contains("list") || 
+                lower.contains("harness") || 
+                lower.contains("daemon") || 
+                lower.contains("log") || 
+                lower.contains("context") ||
+                lower.contains("일감") ||
+                lower.contains("이슈") ||
+                lower.contains("프로젝트") ||
+                lower.contains("상태") ||
+                lower.contains("업그레이드") ||
+                lower.contains("업데이트") ||
+                lower.contains("목록") ||
+                lower.contains("하네스") ||
+                lower.contains("데몬") ||
+                lower.contains("로그");
+            
+            is_short && !has_orchestration_keywords
+        };
 
-        let system_instruction = format!(
-            "You are the Central Orchestrator (Personal Secretary) AI assistant for the user, communicating through the dashboard chat interface.\n\
-            To answer the user's questions or perform their requests, you should retrieve knowledge and status in a Just-in-Time (JIT) manner by running terminal commands using your run_command tool.\n\n\
-            Here are the primary commands you can execute to query the orchestrator's state JIT:\n\
-            - `/home/wimvm/.local/bin/agy-orchestrator info` to get the system, daemon, and dashboard status.\n\
-            - `/home/wimvm/.local/bin/agy-orchestrator list` to get the list of registered projects.\n\
-            - `/home/wimvm/.local/bin/agy-orchestrator get-context --name <project>` to get the path, goal, and status of a specific project.\n\
-            - `/home/wimvm/.local/bin/agy-orchestrator issue --list` to get the current list of evolution tasks and issues.\n\
-            - `/home/wimvm/.local/bin/agy-orchestrator query-memory --query \"<keywords>\"` to find user preferences or design guidelines in the memory vault.\n\n\
-            If the user asks to create or register a task, you can do so by running:\n\
-            - `/home/wimvm/.local/bin/agy-orchestrator issue --create \"<Title>\" --body \"<Description>\"`\n\
-            (Alternatively, you can append `[CREATE_TASK: Title | Body]` at the very end of your final response text, and the system will automatically parse and register it for you).\n\n\
-            Always run the appropriate commands first to obtain the latest real-time status before answering. Do not guess.\n\n\
-            --- GLOBAL OPERATIONAL GUIDELINES ---\n\
-            {}",
-            global_instr
-        );
+        let system_instruction = if is_simple_chat {
+            "You are a friendly personal secretary AI assistant. Respond to the user's message directly, briefly, and instantly in the same language. Do not plan, do not write code, and do not use tools.".to_string()
+        } else {
+            let global_instr_path = backend::vault::get_base_dir().join("memory/system_instructions.md");
+            let global_instr = std::fs::read_to_string(global_instr_path).unwrap_or_default();
+            format!(
+                "You are the Central Orchestrator (Personal Secretary) AI assistant for the user, communicating through the dashboard chat interface.\n\
+                To answer the user's questions or perform their requests, you should retrieve knowledge and status in a Just-in-Time (JIT) manner by running terminal commands using your run_command tool.\n\n\
+                Here are the primary commands you can execute to query the orchestrator's state JIT:\n\
+                - `/home/wimvm/.local/bin/agy-orchestrator info` to get the system, daemon, and dashboard status.\n\
+                - `/home/wimvm/.local/bin/agy-orchestrator list` to get the list of registered projects.\n\
+                - `/home/wimvm/.local/bin/agy-orchestrator get-context --name <project>` to get the path, goal, and status of a specific project.\n\
+                - `/home/wimvm/.local/bin/agy-orchestrator issue --list` to get the current list of evolution tasks and issues.\n\
+                - `/home/wimvm/.local/bin/agy-orchestrator query-memory --query \"<keywords>\"` to find user preferences or design guidelines in the memory vault.\n\n\
+                If the user asks to create or register a task, you can do so by running:\n\
+                - `/home/wimvm/.local/bin/agy-orchestrator issue --create \"<Title>\" --body \"<Description>\"`\n\
+                (Alternatively, you can append `[CREATE_TASK: Title | Body]` at the very end of your final response text, and the system will automatically parse and register it for you).\n\n\
+                CRITICAL: If the user is just saying hello, greeting you, testing the chat, or asking simple questions that do not require orchestrator status, DO NOT write implementation plans, DO NOT write task lists, and DO NOT run any tools. Just answer directly and instantly in a conversational manner.\n\
+                Only run JIT commands if they specifically ask for system status, projects list, or issue management. Do not guess status.\n\n\
+                --- GLOBAL OPERATIONAL GUIDELINES ---\n\
+                {}",
+                global_instr
+            )
+        };
 
         let prompt_payload = format!(
             "[System Instruction: {}]\n\nUser Message: {}",
@@ -448,100 +910,145 @@ async fn send_chat_message(message: String) -> Result<String, ServerFnError> {
             msg_trimmed
         );
 
-        let base_dir = backend::vault::get_base_dir();
-        let chat_id_path = base_dir.join("chat_conversation_id.txt");
-        let mut active_conv_id = None;
+        let brain_dir = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(&actual_session_id);
+        let transcript_path = brain_dir.join(".system_generated/logs/transcript_full.jsonl");
+        let is_new_session = !transcript_path.exists();
 
-        if chat_id_path.exists() {
-            if let Ok(id) = std::fs::read_to_string(&chat_id_path) {
-                let trimmed_id = id.trim().to_string();
-                if !trimmed_id.is_empty() {
-                    let brain_dir = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(&trimmed_id);
-                    if brain_dir.exists() {
-                        active_conv_id = Some(trimmed_id);
-                    }
-                }
-            }
-        }
+        let before_dirs = if is_new_session {
+            get_brain_sessions()
+        } else {
+            std::collections::HashSet::new()
+        };
 
         let mut cmd = std::process::Command::new("/home/wimvm/.local/bin/agy");
         cmd.arg("--prompt").arg(&prompt_payload);
         cmd.arg("--dangerously-skip-permissions");
 
-        if let Some(ref conv_id) = active_conv_id {
-            cmd.arg("--conversation").arg(conv_id);
+        if !is_new_session {
+            cmd.arg("--conversation").arg(&actual_session_id);
             cmd.arg("--continue");
         }
 
         let output = cmd.output();
-        let is_new = active_conv_id.is_none();
 
         match output {
             Ok(out) if out.status.success() => {
-                if is_new {
-                    if let Ok(path_output) = std::process::Command::new("sh")
-                        .arg("-c")
-                        .arg("ls -td /home/wimvm/.gemini/antigravity-cli/brain/*/ | head -n 1")
-                        .output()
-                    {
-                        if path_output.status.success() {
-                            let path_str = String::from_utf8_lossy(&path_output.stdout).trim().to_string();
-                            if !path_str.is_empty() {
-                                if let Some(filename) = std::path::Path::new(&path_str).file_name() {
-                                    let new_id = filename.to_string_lossy().into_owned();
-                                    let _ = std::fs::write(&chat_id_path, &new_id);
-                                    active_conv_id = Some(new_id);
+                let final_session_id = if is_new_session {
+                    let after_dirs = get_brain_sessions();
+                    let diff: std::collections::HashSet<_> = after_dirs.difference(&before_dirs).cloned().collect();
+                    let resolved_new_id = if !diff.is_empty() {
+                        find_newest_brain_session(&diff)
+                    } else {
+                        None
+                    };
+
+                    if let Some(new_id) = resolved_new_id {
+                        if new_id != actual_session_id {
+                            if let Ok(mut sessions) = load_chat_sessions() {
+                                if let Some(session) = sessions.iter_mut().find(|s| s.id == actual_session_id) {
+                                    session.id = new_id.clone();
                                 }
+                                let _ = save_chat_sessions(&sessions);
                             }
+                            
+                            let base_dir = backend::vault::get_base_dir();
+                            let _ = std::fs::write(base_dir.join("active_chat_session_id.txt"), &new_id);
                         }
-                    }
-                }
-
-                if let Some(ref conv_id) = active_conv_id {
-                    match get_transcript_content_by_id(conv_id) {
-                        Ok(clean_reply) => {
-                            let mut final_response = clean_reply;
-
-                            if let Some(start_idx) = final_response.find("[CREATE_TASK:") {
-                                if let Some(end_idx) = final_response[start_idx..].find(']') {
-                                    let full_tag = &final_response[start_idx..start_idx + end_idx + 1];
-                                    let content = &final_response[start_idx + "[CREATE_TASK:".len()..start_idx + end_idx];
-                                    
-                                    let parts: Vec<&str> = content.split('|').collect();
-                                    let title = parts.first().unwrap_or(&"").trim().to_string();
-                                    let body = parts.get(1).unwrap_or(&"").trim().to_string();
-
-                                    if !title.is_empty() {
-                                        let mut issues = backend::issue::load_issues();
-                                        let next_id = issues.iter().map(|i| i.id).max().unwrap_or(0) + 1;
-                                        issues.push(Issue {
-                                            id: next_id,
-                                            title: title.clone(),
-                                            body: if body.is_empty() { format!("Automatically created via chat: {}", title) } else { body },
-                                            status: "open".to_string(),
-                                            created_at: chrono::Local::now().to_rfc3339(),
-                                            resolved_at: None,
-                                        });
-                                        let _ = backend::issue::save_issues(&issues);
+                        new_id
+                    } else {
+                        // Fallback to ls -td if directory diff is empty
+                        if let Ok(path_output) = std::process::Command::new("sh")
+                            .arg("-c")
+                            .arg("ls -td /home/wimvm/.gemini/antigravity-cli/brain/*/ | grep -v '/draft-' | head -n 1")
+                            .output()
+                        {
+                            if path_output.status.success() {
+                                let path_str = String::from_utf8_lossy(&path_output.stdout).trim().to_string();
+                                if !path_str.is_empty() {
+                                    if let Some(filename) = std::path::Path::new(&path_str).file_name() {
+                                        let new_id = filename.to_string_lossy().into_owned();
                                         
-                                        final_response = final_response.replace(full_tag, "").trim().to_string();
-                                        final_response.push_str(&format!("\n\n*(Created task: **{}** [#{}])*", title, next_id));
+                                        if new_id != actual_session_id {
+                                            if let Ok(mut sessions) = load_chat_sessions() {
+                                                if let Some(session) = sessions.iter_mut().find(|s| s.id == actual_session_id) {
+                                                    session.id = new_id.clone();
+                                                }
+                                                let _ = save_chat_sessions(&sessions);
+                                            }
+                                            
+                                            let base_dir = backend::vault::get_base_dir();
+                                            let _ = std::fs::write(base_dir.join("active_chat_session_id.txt"), &new_id);
+                                        }
+                                        new_id
+                                    } else {
+                                        actual_session_id.clone()
                                     }
+                                } else {
+                                    actual_session_id.clone()
                                 }
+                            } else {
+                                actual_session_id.clone()
                             }
-
-                            Ok(final_response)
-                        }
-                        Err(e) => {
-                            Ok(format!("Failed to retrieve agent response: {}", e))
+                        } else {
+                            actual_session_id.clone()
                         }
                     }
                 } else {
-                    Ok("Failed to initialize conversation ID.".to_string())
+                    actual_session_id.clone()
+                };
+
+                let _ = check_and_rename_session(&final_session_id, msg_trimmed);
+
+                match get_transcript_content_by_id(&final_session_id) {
+                    Ok(clean_reply) => {
+                        let mut final_response = clean_reply;
+
+                        if let Some(start_idx) = final_response.find("[CREATE_TASK:") {
+                            if let Some(end_idx) = final_response[start_idx..].find(']') {
+                                let full_tag = &final_response[start_idx..start_idx + end_idx + 1];
+                                let content = &final_response[start_idx + "[CREATE_TASK:".len()..start_idx + end_idx];
+                                
+                                let parts: Vec<&str> = content.split('|').collect();
+                                let title = parts.first().unwrap_or(&"").trim().to_string();
+                                let body = parts.get(1).unwrap_or(&"").trim().to_string();
+
+                                if !title.is_empty() {
+                                    let mut issues = backend::issue::load_issues();
+                                    let next_id = issues.iter().map(|i| i.id).max().unwrap_or(0) + 1;
+                                    issues.push(Issue {
+                                        id: next_id,
+                                        title: title.clone(),
+                                        body: if body.is_empty() { format!("Automatically created via chat: {}", title) } else { body },
+                                        status: "open".to_string(),
+                                        created_at: chrono::Local::now().to_rfc3339(),
+                                        resolved_at: None,
+                                    });
+                                    let _ = backend::issue::save_issues(&issues);
+                                    
+                                    final_response = final_response.replace(full_tag, "").trim().to_string();
+                                    final_response.push_str(&format!("\n\n*(Created task: **{}** [#{}])*", title, next_id));
+                                }
+                            }
+                        }
+
+                        Ok(ChatResponse {
+                            reply: final_response,
+                            actual_session_id: final_session_id,
+                        })
+                    }
+                    Err(e) => {
+                        Ok(ChatResponse {
+                            reply: format!("Failed to retrieve agent response: {}", e),
+                            actual_session_id: final_session_id,
+                        })
+                    }
                 }
             }
             _ => {
-                Ok("Error executing agy prompt CLI.".to_string())
+                Ok(ChatResponse {
+                    reply: "Error executing agy prompt CLI.".to_string(),
+                    actual_session_id: actual_session_id,
+                })
             }
         }
     }
@@ -556,7 +1063,7 @@ async fn send_chat_message(message: String) -> Result<String, ServerFnError> {
 fn get_transcript_content_by_id(conversation_id: &str) -> Result<String, String> {
     let transcript_path = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain")
         .join(conversation_id)
-        .join(".system_generated/logs/transcript.jsonl");
+        .join(".system_generated/logs/transcript_full.jsonl");
     if !transcript_path.exists() {
         return Err("Transcript file does not exist".to_string());
     }
@@ -582,25 +1089,33 @@ fn get_transcript_content_by_id(conversation_id: &str) -> Result<String, String>
 fn main() -> std::io::Result<()> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let has_args = std::env::args().len() > 1;
-        let is_dioxus_env = std::env::var("PORT").is_ok() || std::env::var("ADDR").is_ok() || std::env::var("IP").is_ok() || std::env::var("DIOXUS_ACTIVE").is_ok();
+        use clap::Parser;
+        let cli_parsed = backend::cli::Cli::try_parse();
 
-        if !has_args || is_dioxus_env {
-            // Under dx serve or when direct execution with no args is called, boot up Dioxus.
-            dioxus::launch(frontend::App);
-            Ok(())
-        } else {
-            use clap::Parser;
-            let cli_cmd = backend::cli::Cli::parse();
-            match backend::cli::run_cli(cli_cmd)? {
-                backend::cli::CliResult::Exit => Ok(()),
-                backend::cli::CliResult::StartDashboard { port } => {
-                    // Set port and address in environment so dioxus can find it
-                    std::env::set_var("PORT", port.to_string());
-                    std::env::set_var("ADDR", "0.0.0.0");
-                    std::env::set_var("IP", "0.0.0.0");
+        match cli_parsed {
+            Ok(cli_cmd) => {
+                match backend::cli::run_cli(cli_cmd)? {
+                    backend::cli::CliResult::Exit => Ok(()),
+                    backend::cli::CliResult::StartDashboard { port } => {
+                        // Set port and address in environment so dioxus can find it
+                        std::env::set_var("PORT", port.to_string());
+                        std::env::set_var("ADDR", "0.0.0.0");
+                        std::env::set_var("IP", "0.0.0.0");
+                        dioxus::launch(frontend::App);
+                        Ok(())
+                    }
+                }
+            }
+            Err(e) => {
+                let has_args = std::env::args().len() > 1;
+                let is_dioxus_env = std::env::var("PORT").is_ok() || std::env::var("ADDR").is_ok() || std::env::var("IP").is_ok() || std::env::var("DIOXUS_ACTIVE").is_ok();
+
+                if !has_args || is_dioxus_env {
+                    // Under dx serve or when direct execution with no args is called, boot up Dioxus.
                     dioxus::launch(frontend::App);
                     Ok(())
+                } else {
+                    e.exit();
                 }
             }
         }
@@ -629,6 +1144,91 @@ mod tests {
     fn test_evolution_comment() {
         let content = std::fs::read_to_string("src/main.rs").expect("Failed to read src/main.rs");
         assert!(content.contains("// Evolution verified!"));
+    }
+
+    #[tokio::test]
+    async fn test_multi_session_chat() {
+        #[cfg(feature = "server")]
+        {
+            // 1. Create two separate sessions
+            let id_1 = create_chat_session().await.expect("Failed to create session 1");
+            let id_2 = create_chat_session().await.expect("Failed to create session 2");
+            
+            assert_ne!(id_1, id_2);
+
+            // 2. Write mock history files directly to isolate them and avoid slow LLM integration calls
+            let brain_dir_1 = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(&id_1);
+            let logs_dir_1 = brain_dir_1.join(".system_generated/logs");
+            std::fs::create_dir_all(&logs_dir_1).expect("Failed to create logs dir 1");
+            let transcript_path_1 = logs_dir_1.join("transcript_full.jsonl");
+            let mock_data_1 = r#"{"source":"USER_EXPLICIT","type":"USER_INPUT","content":"Hello from Room 1","created_at":"2026-05-26T08:33:59+09:00"}
+{"source":"MODEL","type":"PLANNER_RESPONSE","content":"Hi there! I am Room 1 assistant.","created_at":"2026-05-26T08:34:05+09:00"}
+"#;
+            std::fs::write(&transcript_path_1, mock_data_1).expect("Failed to write mock transcript 1");
+
+            let brain_dir_2 = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(&id_2);
+            let logs_dir_2 = brain_dir_2.join(".system_generated/logs");
+            std::fs::create_dir_all(&logs_dir_2).expect("Failed to create logs dir 2");
+            let transcript_path_2 = logs_dir_2.join("transcript_full.jsonl");
+            let mock_data_2 = r#"{"source":"USER_EXPLICIT","type":"USER_INPUT","content":"Hello from Room 2","created_at":"2026-05-26T08:33:59+09:00"}
+{"source":"MODEL","type":"PLANNER_RESPONSE","content":"Hi there! I am Room 2 assistant.","created_at":"2026-05-26T08:34:05+09:00"}
+"#;
+            std::fs::write(&transcript_path_2, mock_data_2).expect("Failed to write mock transcript 2");
+            assert!(id_1.starts_with("draft-"));
+            assert!(id_2.starts_with("draft-"));
+
+            // 2. Send messages to both sessions concurrently (to test race conditions)
+            let id_1_clone = id_1.clone();
+            let id_2_clone = id_2.clone();
+
+            let t1 = tokio::spawn(async move {
+                send_chat_message(id_1_clone, "Hello from Room 1".to_string()).await
+            });
+
+            let t2 = tokio::spawn(async move {
+                send_chat_message(id_2_clone, "Hello from Room 2".to_string()).await
+            });
+
+            let (res_1, res_2) = tokio::join!(t1, t2);
+            let reply_1 = res_1.expect("t1 join failed").expect("Failed to send message to Room 1");
+            let reply_2 = res_2.expect("t2 join failed").expect("Failed to send message to Room 2");
+
+            assert!(!reply_1.reply.is_empty());
+            assert!(!reply_2.reply.is_empty());
+
+            // 3. Verify they are transitioned to UUIDs and stored
+            let sessions = get_chat_sessions().await.expect("Failed to get chat sessions");
+            
+            // The drafts should not exist anymore in the list
+            assert!(!sessions.iter().any(|s| s.id == id_1));
+            assert!(!sessions.iter().any(|s| s.id == id_2));
+
+            // But we should find the rooms with the correct titles
+            let s1_opt = sessions.iter().find(|s| s.title == "Hello from Room 1");
+            let s2_opt = sessions.iter().find(|s| s.title == "Hello from Room 2");
+
+            assert!(s1_opt.is_some());
+            assert!(s2_opt.is_some());
+
+            let real_id_1 = s1_opt.unwrap().id.clone();
+            let real_id_2 = s2_opt.unwrap().id.clone();
+
+            // 4. Verify histories are isolated
+            let history_1 = get_chat_history(real_id_1.clone()).await.expect("Failed to get history for Room 1");
+            let history_2 = get_chat_history(real_id_2.clone()).await.expect("Failed to get history for Room 2");
+
+            // Session 1 should contain Room 1 message, but NOT Room 2 message
+            assert!(history_1.iter().any(|m| m.text.contains("Hello from Room 1")));
+            assert!(!history_1.iter().any(|m| m.text.contains("Hello from Room 2")));
+
+            // Session 2 should contain Room 2 message, but NOT Room 1 message
+            assert!(history_2.iter().any(|m| m.text.contains("Hello from Room 2")));
+            assert!(!history_2.iter().any(|m| m.text.contains("Hello from Room 1")));
+
+            // 5. Delete both sessions and clean up
+            delete_chat_session(real_id_1.clone()).await.expect("Failed to delete session 1");
+            delete_chat_session(real_id_2.clone()).await.expect("Failed to delete session 2");
+        }
     }
 }
 

@@ -24,6 +24,21 @@ pub struct Issue {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ChatMessage {
+    pub is_user: bool,
+    pub text: String,
+    pub timestamp: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ChatSession {
+    pub id: String,
+    pub title: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct HealthCheckResult {
     pub target: String,
     pub healthy: bool,
@@ -78,6 +93,24 @@ pub fn App() -> Element {
     let mut upgrade_available = use_signal(|| None::<(String, String)>);
     let mut show_feedback_modal = use_signal(|| false);
     let mut upgrade_progress = use_signal(|| UpgradeProgress::Idle);
+    let mut chat_messages = use_signal(HashMap::<String, Vec<ChatMessage>>::new);
+    let mut active_session_id = use_signal(|| None::<String>);
+    let mut chat_sessions = use_signal(Vec::<ChatSession>::new);
+
+    // Load chat history once on mount
+    let _chat_init = use_future(move || async move {
+        if let Ok(sessions) = crate::get_chat_sessions().await {
+            chat_sessions.set(sessions);
+        }
+        if let Ok(Some(active_id)) = crate::get_active_session_id().await {
+            active_session_id.set(Some(active_id.clone()));
+            if let Ok(history) = crate::get_chat_history(active_id.clone()).await {
+                let mut map = HashMap::new();
+                map.insert(active_id, history);
+                chat_messages.set(map);
+            }
+        }
+    });
 
     // Poll data periodically
     let _fetch_future = use_future(move || async move {
@@ -111,7 +144,7 @@ pub fn App() -> Element {
         document::Link { rel: "stylesheet", href: asset!("/assets/tailwind.css") }
         document::Link { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" }
 
-        div { class: "bg-slate-950 text-slate-100 min-h-screen font-sans flex flex-col selection:bg-indigo-500 selection:text-white",
+        div { class: "bg-slate-950 text-slate-100 h-screen overflow-hidden font-sans flex flex-col selection:bg-indigo-500 selection:text-white",
             // Header Bar
             header { class: "bg-slate-900/80 backdrop-blur-md border-b border-slate-800/80 px-6 py-4 flex items-center justify-between sticky top-0 z-50",
                 div { class: "flex items-center gap-3",
@@ -120,7 +153,7 @@ pub fn App() -> Element {
                         "AGY Orchestrator Dashboard"
                     }
                     span { class: "text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded-md font-mono font-semibold",
-                        "v{env!(\"CARGO_PKG_VERSION\")}"
+                        "v{env!(\"AGY_ORCHESTRATOR_VERSION\")}"
                     }
                     if let Some((tag_name, download_url)) = upgrade_available.read().clone() {
                         button {
@@ -238,7 +271,29 @@ pub fn App() -> Element {
                                 } else {
                                     "hover:bg-slate-800/50 text-slate-400 hover:text-slate-200 border-l-4 border-transparent"
                                 },
-                            onclick: move |_| active_tab.set("chat".to_string()),
+                            onclick: move |_| {
+                                active_tab.set("chat".to_string());
+                                let mut msgs = chat_messages;
+                                let mut sessions_sig = chat_sessions;
+                                let mut active_sig = active_session_id;
+                                spawn(async move {
+                                    if let Ok(sessions) = crate::get_chat_sessions().await {
+                                        sessions_sig.set(sessions);
+                                    }
+                                    match crate::get_active_session_id().await {
+                                        Ok(Some(active_id)) => {
+                                            active_sig.set(Some(active_id.clone()));
+                                            if let Ok(history) = crate::get_chat_history(active_id.clone()).await {
+                                                msgs.write().insert(active_id, history);
+                                            }
+                                        }
+                                        Ok(None) => {
+                                            active_sig.set(None);
+                                        }
+                                        Err(_) => {}
+                                    }
+                                });
+                            },
                             span { "💬" }
                             "Chat Assistant"
                         }
@@ -252,7 +307,8 @@ pub fn App() -> Element {
                 }
 
                 // Tab Content Panel
-                main { class: "flex-1 overflow-y-auto p-8",
+                main {
+                    class: "flex-1 p-8 flex flex-col overflow-hidden h-full",
                     match active_tab.read().as_str() {
                         "projects" => rsx! {
                             ProjectsTab {
@@ -278,7 +334,10 @@ pub fn App() -> Element {
                         },
                         "chat" => rsx! {
                             ChatTab {
-                                issues: issues
+                                messages: chat_messages,
+                                issues: issues,
+                                active_session_id: active_session_id,
+                                chat_sessions: chat_sessions
                             }
                         },
                         _ => rsx! { div { "Unknown tab" } }

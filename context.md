@@ -9,12 +9,20 @@ JIT Memory Agent Orchestrator & Knowledge Vault for AI coding assistants.
 
 ## System Features
 - **Daemon Loop**: Handles status monitoring, report consolidation, log compression, task running, and updates.
-- **OTA Self-Upgrade**: Downloads and extracts releases, restarts systemd service, and spawns the upgraded dashboard seamlessly using stable binary path fallbacks when unlinked.
+- **OTA Self-Upgrade**: Downloads/recompiles binary, updates public assets, restarts daemon, and automatically restarts dashboard web process on its active port using detached `setsid()`.
+- **Auto-Incrementing Dev Version**: Tracks local dev compiles at `~/.agy_orchestrator/dev_build_number` and appends `-dev<Count>` suffix for clear version tracking. Enforces recompilation on source folder edits.
 - **Evolution Harness**: Validates edits against static integrity gates, clippy warnings (`-D warnings`), and test suites before committing/resolving issues.
 - **Premium Chat Assistant**: Glassmorphic, highly polished UI tab integrated with `agy` CLI using session tracking. Supports:
   - Custom pure-Rust Markdown & code block parser/renderer with interactive copy buttons.
   - Quick action chips for JIT system queries (info, list, issues, create task).
   - Header controls to reset conversation sessions.
+  - Multi-Room Chat Session Management: Switch, create, and delete individual rooms with first-message auto-naming. Auto-promotes missing/empty UUID session folders safely.
+  - Isolated UX states: HashMap-based loading flags per room and active session filtering to prevent cross-room message bleed-through.
+  - Robust Session Mapping & Simple Chat Fast-Path: Unifies session promotion, filters out draft directories to prevent path errors, and strips heavy prompts context for simple chats to reduce TTFT/latency.
+  - Log Tab Auto-Scroll: Automatically scrolls the terminal container to the bottom on mounting and log updates so the latest notifications are instantly visible.
+  - Chat Tab Auto-Scroll: Automatically scrolls the message list container to the bottom when entering the chat tab, switching rooms, or when new messages arrive.
+  - Clean Chat UX & Command Masking: Mask raw technical CLI command prompts (like info/list) in the chat bubble UI with beautiful human-readable labels, and styled scrollbars for sidebar and chat area.
+  - Native Desktop Integration & Focus: Replaced restricted container dimensions (for Chat, Projects, Kanban Issues, Knowledge Vault, and Live Logs) with standard `h-full w-full overflow-hidden` and inner flex layouts. This eliminates awkward double scrollbars on desktop, keeps page headers fixed at the top, and implements room deletion confirmation and chat input auto-focus.
 
 ## Project Playbook (AGENTS.md)
 Rules for AI developers:

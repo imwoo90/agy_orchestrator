@@ -18,10 +18,10 @@ pub fn VaultTab(
     let projects_map = projects.read();
 
     rsx! {
-        div { class: "grid grid-cols-1 lg:grid-cols-3 gap-8 items-start h-[calc(100vh-180px)]",
+        div { class: "grid grid-cols-1 lg:grid-cols-3 gap-8 items-stretch h-full w-full overflow-hidden",
             // Notes list sidebar
-            div { class: "bg-slate-900/40 border border-slate-850 rounded-2xl p-4 flex flex-col gap-4 h-full",
-                div { class: "flex items-center justify-between",
+            div { class: "bg-slate-900/40 border border-slate-850 rounded-2xl p-4 flex flex-col gap-4 h-full min-h-0",
+                div { class: "flex items-center justify-between shrink-0",
                     h3 { class: "font-bold text-slate-200", "Knowledge Vault" }
                     button {
                         class: "px-3 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 text-xs font-semibold border border-indigo-500/20 transition-all",
@@ -35,7 +35,7 @@ pub fn VaultTab(
                     }
                 }
 
-                div { class: "flex-1 overflow-y-auto flex flex-col gap-2 scrollbar-thin scrollbar-thumb-slate-800",
+                div { class: "flex-1 overflow-y-auto flex flex-col gap-2 scrollbar-thin scrollbar-thumb-slate-800 pr-1",
                     for i in 0..vault_notes.read().len() {
                         if let Some((name, _)) = vault_notes.read().get(i).cloned() {
                             button {
@@ -62,9 +62,9 @@ pub fn VaultTab(
             }
 
             // Note editor panel
-            div { class: "lg:col-span-2 bg-slate-900/30 border border-slate-850 rounded-2xl p-6 h-full flex flex-col justify-between",
+            div { class: "lg:col-span-2 bg-slate-900/30 border border-slate-850 rounded-2xl p-6 h-full flex flex-col justify-between min-h-0 overflow-hidden",
                 if *create_mode.read() || selected_note_index.read().is_some() {
-                    div { class: "flex-1 flex flex-col gap-4 overflow-hidden",
+                    div { class: "flex-1 flex flex-col gap-4 overflow-hidden min-h-0",
                         div { class: "flex flex-col gap-1.5",
                             label { class: "text-xs font-semibold text-slate-500 uppercase tracking-wider", "Note Filename" }
                             input {
@@ -76,7 +76,7 @@ pub fn VaultTab(
                             }
                         }
 
-                        div { class: "flex-1 flex flex-col gap-1.5 overflow-hidden",
+                        div { class: "flex-1 flex flex-col gap-1.5 overflow-hidden min-h-0",
                             label { class: "text-xs font-semibold text-slate-500 uppercase tracking-wider", "Note Content" }
                             textarea {
                                 class: "flex-1 w-full bg-slate-950/80 border border-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-lg px-3 py-2 text-slate-100 outline-none transition-all resize-none font-mono text-sm leading-relaxed scrollbar-thin scrollbar-thumb-slate-800",
@@ -88,7 +88,7 @@ pub fn VaultTab(
 
                         // Inject knowledge section
                         if selected_note_index.read().is_some() && !*create_mode.read() {
-                            div { class: "bg-slate-950/40 border border-slate-850 rounded-xl p-4 flex flex-col gap-3",
+                            div { class: "bg-slate-950/40 border border-slate-850 rounded-xl p-4 flex flex-col gap-3 shrink-0",
                                 h4 { class: "text-xs font-bold text-slate-400 uppercase tracking-wider", "Inject Context Memory" }
                                 div { class: "flex items-center gap-4",
                                     select {
@@ -125,7 +125,7 @@ pub fn VaultTab(
                     }
 
                     // Save / Reset controls
-                    div { class: "flex justify-end gap-3 mt-6 pt-4 border-t border-slate-850",
+                    div { class: "flex justify-end gap-3 mt-6 pt-4 border-t border-slate-850 shrink-0",
                         button {
                             class: "px-4 py-2 text-xs font-semibold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700/80 transition-all",
                             onclick: move |_| {
