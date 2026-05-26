@@ -271,6 +271,11 @@ pub async fn toggle_daemon() -> Result<bool, ServerFnError> {
 pub async fn spawn_project_task(name: String, path: String, goal: String) -> Result<(), ServerFnError> {
     #[cfg(not(target_arch = "wasm32"))]
     {
+        let canonical_path = std::fs::canonicalize(std::path::Path::new(&path))
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| path.clone());
+        let _ = backend::vault::authorize_workspace(&canonical_path);
+
         let cli_struct = backend::cli::Cli {
             command: backend::cli::Commands::Spawn { name, path, goal }
         };
@@ -930,6 +935,31 @@ pub async fn send_chat_message(session_id: String, message: String) -> Result<Ch
                 })
             }
         }
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
+}
+
+#[server]
+pub async fn check_workspace_auth(path: String) -> Result<bool, ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Ok(backend::vault::is_workspace_authorized(&path))
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
+}
+
+#[server]
+pub async fn authorize_workspace_path(path: String) -> Result<(), ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        backend::vault::authorize_workspace(&path)
+            .map_err(|e| ServerFnError::new(e.to_string()))
     }
     #[cfg(target_arch = "wasm32")]
     {

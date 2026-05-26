@@ -111,3 +111,93 @@ pub fn bootstrap_if_needed() -> io::Result<()> {
 
     Ok(())
 }
+
+pub fn get_settings_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/wimvm".to_string());
+    PathBuf::from(home).join(".gemini/antigravity-cli/settings.json")
+}
+
+pub fn is_workspace_authorized(path: &str) -> bool {
+    let settings_path = get_settings_path();
+    if !settings_path.exists() {
+        return false;
+    }
+    let content = match std::fs::read_to_string(&settings_path) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let json: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(j) => j,
+        Err(_) => return false,
+    };
+
+    if let Some(permissions) = json.get("permissions") {
+        if let Some(allow) = permissions.get("allow") {
+            if let Some(arr) = allow.as_array() {
+                let has_read = arr.iter().any(|v| v.as_str().is_some_and(|s| s == format!("read_file({})", path)));
+                let has_write = arr.iter().any(|v| v.as_str().is_some_and(|s| s == format!("write_file({})", path)));
+                let has_command = arr.iter().any(|v| v.as_str() == Some("command(*)"));
+                return has_read && has_write && has_command;
+            }
+        }
+    }
+    false
+}
+
+pub fn authorize_workspace(path: &str) -> std::io::Result<()> {
+    let settings_path = get_settings_path();
+    if let Some(parent) = settings_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let mut json: serde_json::Value = if settings_path.exists() {
+        let content = std::fs::read_to_string(&settings_path)?;
+        serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+
+    if json.get("permissions").is_none() {
+        json["permissions"] = serde_json::json!({});
+    }
+    if json["permissions"].get("allow").is_none() {
+        json["permissions"]["allow"] = serde_json::json!([]);
+    }
+
+    if json.get("trustedWorkspaces").is_none() {
+        json["trustedWorkspaces"] = serde_json::json!([]);
+    }
+
+    if let Some(tw_arr) = json["trustedWorkspaces"].as_array_mut() {
+        let path_val = serde_json::json!(path);
+        if !tw_arr.contains(&path_val) {
+            tw_arr.push(path_val);
+        }
+    }
+
+    if let Some(allow_arr) = json["permissions"]["allow"].as_array_mut() {
+        let read_perm = format!("read_file({})", path);
+        let write_perm = format!("write_file({})", path);
+        let cmd_perm = "command(*)".to_string();
+
+        let read_val = serde_json::json!(read_perm);
+        let write_val = serde_json::json!(write_perm);
+        let cmd_val = serde_json::json!(cmd_perm);
+
+        if !allow_arr.contains(&read_val) {
+            allow_arr.push(read_val);
+        }
+        if !allow_arr.contains(&write_val) {
+            allow_arr.push(write_val);
+        }
+        if !allow_arr.contains(&cmd_val) {
+            allow_arr.push(cmd_val);
+        }
+    }
+
+    let file = std::fs::File::create(&settings_path)?;
+    serde_json::to_writer_pretty(file, &json)?;
+
+    Ok(())
+}
+

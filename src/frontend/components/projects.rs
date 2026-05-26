@@ -13,7 +13,32 @@ pub fn ProjectsTab(
     let mut goal = use_signal(String::new);
     let mut status_msg = use_signal(String::new);
 
+    let mut auth_states = use_signal(HashMap::<String, bool>::new);
+
     let projects_map = projects.read();
+
+    use_effect(move || {
+        let projects_map = projects.read().clone();
+        spawn(async move {
+            let mut new_auths = HashMap::new();
+            for (_name, info) in projects_map.iter() {
+                if let Ok(authorized) = crate::check_workspace_auth(info.path.clone()).await {
+                    new_auths.insert(info.path.clone(), authorized);
+                }
+            }
+            auth_states.set(new_auths);
+        });
+    });
+
+    let authorize_path = move |path: String| {
+        spawn(async move {
+            if crate::authorize_workspace_path(path.clone()).await.is_ok() {
+                if let Ok(authorized) = crate::check_workspace_auth(path.clone()).await {
+                    auth_states.write().insert(path, authorized);
+                }
+            }
+        });
+    };
 
     // 1. Build parent-child relationships
     let mut root_projects = Vec::new();
@@ -92,6 +117,34 @@ pub fn ProjectsTab(
                                 div { class: "flex flex-col gap-1",
                                     span { class: "text-xs font-semibold text-slate-500", "Workspace Path" }
                                     span { class: "text-xs font-mono text-slate-400 truncate bg-slate-950/30 px-2 py-1 rounded border border-slate-900/80", "{info.path}" }
+                                }
+
+                                {
+                                    let path_val = info.path.clone();
+                                    let is_auth = *auth_states.read().get(&path_val).unwrap_or(&false);
+                                    rsx! {
+                                        div { class: "flex items-center justify-between mt-2 bg-slate-950/20 border border-slate-850 rounded-xl p-3",
+                                            div { class: "flex flex-col gap-0.5",
+                                                span { class: "text-xs font-semibold text-slate-500", "Sandbox Permissions" }
+                                                if is_auth {
+                                                    span { class: "text-xs font-semibold text-emerald-400 flex items-center gap-1",
+                                                        "✅ Authorized"
+                                                    }
+                                                } else {
+                                                    span { class: "text-xs font-semibold text-amber-500 flex items-center gap-1 animate-pulse",
+                                                        "⚠️ Pending Authorization"
+                                                    }
+                                                }
+                                            }
+                                            if !is_auth {
+                                                button {
+                                                    class: "px-3 py-1.5 rounded-lg bg-indigo-650 hover:bg-indigo-500 text-white text-xs font-semibold transition-all duration-200 active:scale-95 shadow shadow-indigo-900/30 cursor-pointer",
+                                                    onclick: move |_| authorize_path(path_val.clone()),
+                                                    "Authorize"
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
 
                                 // Nested Sub-Agents
