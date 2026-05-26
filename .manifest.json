@@ -1,6 +1,16 @@
 {
   "cli_version": "0.7.9 (bfcc111)",
   "assets": {
+    "/home/wimvm/works/agy_orchestrator/assets/tailwind.css": [
+      {
+        "absolute_source_path": "/home/wimvm/works/agy_orchestrator/assets/tailwind.css",
+        "bundled_path": "tailwind-dxh7ee3936fc0c2bb18.css",
+        "options": {
+          "add_hash": true,
+          "variant": "Unknown"
+        }
+      }
+    ],
     "/home/wimvm/works/agy_orchestrator/public/home/wimvm/works/agy_orchestrator/assets/tailwind.css": [
       {
         "absolute_source_path": "/home/wimvm/works/agy_orchestrator/public/home/wimvm/works/agy_orchestrator/assets/tailwind.css",
@@ -11,20 +21,10 @@
         }
       }
     ],
-    "/home/wimvm/works/agy_orchestrator/tailwind.css": [
-      {
-        "absolute_source_path": "/home/wimvm/works/agy_orchestrator/tailwind.css",
-        "bundled_path": "tailwind-dxh2281404d152187f.css",
-        "options": {
-          "add_hash": true,
-          "variant": "Unknown"
-        }
-      }
-    ],
     "/home/wimvm/works/agy_orchestrator/target/dx/agy-orchestrator/release/web/public/wasm/agy-orchestrator.js": [
       {
         "absolute_source_path": "/home/wimvm/works/agy_orchestrator/target/dx/agy-orchestrator/release/web/public/wasm/agy-orchestrator.js",
-        "bundled_path": "agy-orchestrator-dxhad21adfb77fea6f3.js",
+        "bundled_path": "agy-orchestrator-dxh5c7a9d42b9cbd810.js",
         "options": {
           "add_hash": true,
           "variant": {
@@ -41,7 +41,7 @@
     "/home/wimvm/works/agy_orchestrator/target/dx/agy-orchestrator/release/web/public/wasm/agy-orchestrator_bg.wasm": [
       {
         "absolute_source_path": "/home/wimvm/works/agy_orchestrator/target/dx/agy-orchestrator/release/web/public/wasm/agy-orchestrator_bg.wasm",
-        "bundled_path": "agy-orchestrator_bg-dxh71471e42e653bcde.wasm",
+        "bundled_path": "agy-orchestrator_bg-dxh88445a257d7faa77.wasm",
         "options": {
           "add_hash": true,
           "variant": "Unknown"
