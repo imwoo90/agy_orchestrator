@@ -605,7 +605,6 @@ pub fn ChatTab(
                                 div { class: "min-w-0",
                                     h2 { class: "text-sm font-bold text-slate-100 flex items-center gap-2 truncate",
                                         "{current_session_title}"
-                                        span { class: "text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-300 font-semibold border border-indigo-500/20 shrink-0", "Hermes Mode" }
                                     }
                                     p { class: "text-[10px] text-slate-450 font-medium mt-0.5 truncate", "Active Room ID: {active_id}" }
                                 }
@@ -721,46 +720,16 @@ pub fn ChatTab(
                             }
                         }
 
-                        // Quick Actions Bar
-                        div { class: "px-6 py-3.5 bg-slate-900/30 border-t border-slate-850/80 flex flex-wrap gap-2.5 items-center backdrop-blur-sm shrink-0",
-                            span { class: "text-[9px] text-slate-450 uppercase tracking-widest font-bold mr-1.5", "JIT Commands" }
-                            
-                            button {
-                                class: "px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-850 hover:bg-indigo-950/40 hover:text-indigo-300 border border-slate-800 hover:border-indigo-800/50 transition-all duration-200 cursor-pointer flex items-center gap-1.5 active:scale-95 shadow-sm text-slate-300",
-                                onclick: move |_| {
-                                    send_custom_message("agy-orchestrator info".to_string());
-                                },
-                                span { "🗼" }
-                                span { "System Info" }
-                            }
-                            button {
-                                class: "px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-850 hover:bg-indigo-950/40 hover:text-indigo-300 border border-slate-800 hover:border-indigo-800/50 transition-all duration-200 cursor-pointer flex items-center gap-1.5 active:scale-95 shadow-sm text-slate-300",
-                                onclick: move |_| {
-                                    send_custom_message("agy-orchestrator list".to_string());
-                                },
-                                span { "📋" }
-                                span { "List Projects" }
-                            }
-                            button {
-                                class: "px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-850 hover:bg-indigo-950/40 hover:text-indigo-300 border border-slate-800 hover:border-indigo-800/50 transition-all duration-200 cursor-pointer flex items-center gap-1.5 active:scale-95 shadow-sm text-slate-300",
-                                onclick: move |_| {
-                                    send_custom_message("agy-orchestrator issue --list".to_string());
-                                },
-                                span { "🐛" }
-                                span { "Active Issues" }
-                            }
-                            button {
-                                class: "px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-850 hover:bg-indigo-950/40 hover:text-indigo-300 border border-slate-800 hover:border-indigo-800/50 transition-all duration-200 cursor-pointer flex items-center gap-1.5 active:scale-95 shadow-sm text-slate-300",
-                                onclick: move |_| {
-                                    input_text.set("create task: ".to_string());
-                                },
-                                span { "➕" }
-                                span { "Create Task" }
-                            }
-                        }
-
                         // Input Bar
                         div { class: "bg-slate-900/60 border-t border-slate-850/80 p-4.5 flex gap-3 items-center backdrop-blur-md shrink-0",
+                            button {
+                                class: "p-3 rounded-xl bg-slate-950 hover:bg-slate-900 border border-slate-850/80 text-slate-400 hover:text-slate-200 transition-all active:scale-95 cursor-pointer shadow-inner flex items-center justify-center shrink-0",
+                                onclick: move |_| {
+                                    let _ = eval("alert('파일/이미지 첨부 기능은 곧 추가될 예정입니다! 📎');");
+                                },
+                                title: "Attach files or images (Coming Soon)",
+                                span { class: "text-base", "📎" }
+                            }
                             input {
                                 id: "chat-input-field",
                                 class: "flex-1 bg-slate-950 border border-slate-850 rounded-xl px-4.5 py-3 text-sm text-slate-200 placeholder:text-slate-550 focus:outline-none focus:border-indigo-500/60 focus:ring-1 focus:ring-indigo-500/20 transition-all shadow-inner",
