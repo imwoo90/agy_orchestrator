@@ -271,7 +271,12 @@ fn load_chat_sessions() -> Result<Vec<crate::frontend::app::ChatSession>, String
         return Ok(Vec::new());
     }
     let content = std::fs::read_to_string(&sessions_path).map_err(|e| e.to_string())?;
-    serde_json::from_str(&content).map_err(|e| e.to_string())
+    let mut sessions: Vec<crate::frontend::app::ChatSession> = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    
+    let mut seen = std::collections::HashSet::new();
+    sessions.retain(|s| seen.insert(s.id.clone()));
+    
+    Ok(sessions)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -281,6 +286,44 @@ fn save_chat_sessions(sessions: &[crate::frontend::app::ChatSession]) -> Result<
     let sessions_path = base_dir.join("chat_sessions.json");
     let content = serde_json::to_string_pretty(sessions).map_err(|e| e.to_string())?;
     std::fs::write(&sessions_path, content).map_err(|e| e.to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
+fn get_brain_sessions() -> std::collections::HashSet<String> {
+    let mut dirs = std::collections::HashSet::new();
+    if let Ok(entries) = std::fs::read_dir("/home/wimvm/.gemini/antigravity-cli/brain") {
+        for entry in entries.flatten() {
+            if let Ok(meta) = entry.metadata() {
+                if meta.is_dir() {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    if !name.starts_with("draft-") {
+                        dirs.insert(name);
+                    }
+                }
+            }
+        }
+    }
+    dirs
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
+fn find_newest_brain_session(diff: &std::collections::HashSet<String>) -> Option<String> {
+    let mut newest_name = None;
+    let mut newest_time = std::time::SystemTime::UNIX_EPOCH;
+    for name in diff {
+        let path = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(name);
+        if let Ok(meta) = std::fs::metadata(path) {
+            if let Ok(modified) = meta.modified() {
+                if modified > newest_time {
+                    newest_time = modified;
+                    newest_name = Some(name.clone());
+                }
+            }
+        }
+    }
+    newest_name
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -870,6 +913,12 @@ async fn send_chat_message(session_id: String, message: String) -> Result<ChatRe
         let transcript_path = brain_dir.join(".system_generated/logs/transcript_full.jsonl");
         let is_new_session = !transcript_path.exists();
 
+        let before_dirs = if is_new_session {
+            get_brain_sessions()
+        } else {
+            std::collections::HashSet::new()
+        };
+
         let mut cmd = std::process::Command::new("/home/wimvm/.local/bin/agy");
         cmd.arg("--prompt").arg(&prompt_payload);
         cmd.arg("--dangerously-skip-permissions");
@@ -884,30 +933,55 @@ async fn send_chat_message(session_id: String, message: String) -> Result<ChatRe
         match output {
             Ok(out) if out.status.success() => {
                 let final_session_id = if is_new_session {
-                    if let Ok(path_output) = std::process::Command::new("sh")
-                        .arg("-c")
-                        .arg("ls -td /home/wimvm/.gemini/antigravity-cli/brain/*/ | grep -v '/draft-' | head -n 1")
-                        .output()
-                    {
-                        if path_output.status.success() {
-                            let path_str = String::from_utf8_lossy(&path_output.stdout).trim().to_string();
-                            if !path_str.is_empty() {
-                                if let Some(filename) = std::path::Path::new(&path_str).file_name() {
-                                    let new_id = filename.to_string_lossy().into_owned();
-                                    
-                                    if new_id != actual_session_id {
-                                        if let Ok(mut sessions) = load_chat_sessions() {
-                                            if let Some(session) = sessions.iter_mut().find(|s| s.id == actual_session_id) {
-                                                session.id = new_id.clone();
-                                            }
-                                            let _ = save_chat_sessions(&sessions);
-                                        }
-                                        
-                                        let base_dir = backend::vault::get_base_dir();
-                                        let _ = std::fs::write(base_dir.join("active_chat_session_id.txt"), &new_id);
-                                    }
+                    let after_dirs = get_brain_sessions();
+                    let diff: std::collections::HashSet<_> = after_dirs.difference(&before_dirs).cloned().collect();
+                    let resolved_new_id = if !diff.is_empty() {
+                        find_newest_brain_session(&diff)
+                    } else {
+                        None
+                    };
 
-                                    new_id
+                    if let Some(new_id) = resolved_new_id {
+                        if new_id != actual_session_id {
+                            if let Ok(mut sessions) = load_chat_sessions() {
+                                if let Some(session) = sessions.iter_mut().find(|s| s.id == actual_session_id) {
+                                    session.id = new_id.clone();
+                                }
+                                let _ = save_chat_sessions(&sessions);
+                            }
+                            
+                            let base_dir = backend::vault::get_base_dir();
+                            let _ = std::fs::write(base_dir.join("active_chat_session_id.txt"), &new_id);
+                        }
+                        new_id
+                    } else {
+                        // Fallback to ls -td if directory diff is empty
+                        if let Ok(path_output) = std::process::Command::new("sh")
+                            .arg("-c")
+                            .arg("ls -td /home/wimvm/.gemini/antigravity-cli/brain/*/ | grep -v '/draft-' | head -n 1")
+                            .output()
+                        {
+                            if path_output.status.success() {
+                                let path_str = String::from_utf8_lossy(&path_output.stdout).trim().to_string();
+                                if !path_str.is_empty() {
+                                    if let Some(filename) = std::path::Path::new(&path_str).file_name() {
+                                        let new_id = filename.to_string_lossy().into_owned();
+                                        
+                                        if new_id != actual_session_id {
+                                            if let Ok(mut sessions) = load_chat_sessions() {
+                                                if let Some(session) = sessions.iter_mut().find(|s| s.id == actual_session_id) {
+                                                    session.id = new_id.clone();
+                                                }
+                                                let _ = save_chat_sessions(&sessions);
+                                            }
+                                            
+                                            let base_dir = backend::vault::get_base_dir();
+                                            let _ = std::fs::write(base_dir.join("active_chat_session_id.txt"), &new_id);
+                                        }
+                                        new_id
+                                    } else {
+                                        actual_session_id.clone()
+                                    }
                                 } else {
                                     actual_session_id.clone()
                                 }
@@ -917,8 +991,6 @@ async fn send_chat_message(session_id: String, message: String) -> Result<ChatRe
                         } else {
                             actual_session_id.clone()
                         }
-                    } else {
-                        actual_session_id.clone()
                     }
                 } else {
                     actual_session_id.clone()
