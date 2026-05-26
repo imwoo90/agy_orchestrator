@@ -223,6 +223,10 @@ async fn toggle_daemon() -> Result<bool, ServerFnError> {
             let current_exe = std::env::current_exe().map_err(|e| ServerFnError::new(e.to_string()))?;
             let mut cmd = std::process::Command::new(&current_exe);
             cmd.arg("daemon").arg("--start");
+            cmd.env_remove("PORT");
+            cmd.env_remove("ADDR");
+            cmd.env_remove("IP");
+            cmd.env_remove("DIOXUS_ACTIVE");
             cmd.status().map_err(|e| ServerFnError::new(e.to_string()))?;
             Ok(true)
         }
@@ -759,6 +763,7 @@ async fn send_chat_message(session_id: String, message: String) -> Result<ChatRe
                 exec_cmd.env_remove("PORT");
                 exec_cmd.env_remove("ADDR");
                 exec_cmd.env_remove("IP");
+                exec_cmd.env_remove("DIOXUS_ACTIVE");
                 
                 if let Ok(cmd_out) = exec_cmd.output() {
                     let stdout_str = String::from_utf8_lossy(&cmd_out.stdout).to_string();

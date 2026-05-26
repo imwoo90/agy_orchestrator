@@ -22,6 +22,10 @@ pub fn execute(start: bool, stop: bool, status: bool, run: bool) -> io::Result<C
         let current_exe = std::env::current_exe()?;
         let mut cmd = Command::new(&current_exe);
         cmd.arg("daemon").arg("--run");
+        cmd.env_remove("PORT");
+        cmd.env_remove("ADDR");
+        cmd.env_remove("IP");
+        cmd.env_remove("DIOXUS_ACTIVE");
 
         let daemon_log_path = base_dir.join("daemon.log");
         let daemon_log_file = File::create(&daemon_log_path)?;
