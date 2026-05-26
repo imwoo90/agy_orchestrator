@@ -342,8 +342,7 @@ pub fn ChatTab(
         display_messages
     };
 
-    let send_message = move || {
-        let text = input_text.read().trim().to_string();
+    let send_custom_message = move |text: String| {
         let active_id = match active_session_id.read().clone() {
             Some(id) => id,
             None => return,
@@ -356,7 +355,6 @@ pub fn ChatTab(
 
         let mut msg_list = messages;
         let mut loading = is_loading;
-        let mut input = input_text;
         let mut issues_sig = issues;
         let mut chat_sessions_sig = chat_sessions;
         let active_id_spawn = active_id.clone();
@@ -368,7 +366,6 @@ pub fn ChatTab(
                 text: text.clone(),
                 timestamp: chrono::Local::now().format("%H:%M").to_string(),
             });
-            input.set(String::new());
             loading.write().insert(active_id_spawn.clone(), true);
 
             let mut final_id = active_id_spawn.clone();
@@ -415,6 +412,14 @@ pub fn ChatTab(
         });
     };
 
+    let mut send_message = move || {
+        let text = input_text.read().trim().to_string();
+        if !text.is_empty() {
+            send_custom_message(text);
+            input_text.set(String::new());
+        }
+    };
+
     rsx! {
         div { class: "flex h-[calc(100vh-12rem)] max-w-6xl mx-auto bg-gradient-to-br from-slate-900/60 to-slate-950/80 border border-slate-800/80 rounded-2xl overflow-hidden shadow-2xl backdrop-blur-md",
             
@@ -445,7 +450,7 @@ pub fn ChatTab(
                 }
 
                 // Rooms List
-                div { class: "flex-1 overflow-y-auto p-3 flex flex-col gap-2",
+                div { class: "flex-1 overflow-y-auto p-3 flex flex-col gap-2 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent",
                     if chat_sessions.read().is_empty() {
                         div { class: "text-center text-[11px] text-slate-500 py-8 font-medium",
                             "No active chats"
@@ -601,7 +606,7 @@ pub fn ChatTab(
                         // Message Stream Area
                         div {
                             id: "chat-messages-container",
-                            class: "flex-1 overflow-y-auto p-6 flex flex-col gap-6",
+                            class: "flex-1 overflow-y-auto p-6 flex flex-col gap-6 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent",
                             for msg in display_messages.iter() {
                                 div {
                                     class: format!("flex gap-3.5 max-w-[85%] {}", if msg.is_user { "self-end flex-row-reverse" } else { "self-start" }),
@@ -631,7 +636,16 @@ pub fn ChatTab(
                                             ),
                                             {
                                                 if msg.is_user {
-                                                    rsx! { p { class: "text-sm leading-relaxed", "{msg.text}" } }
+                                                    let display_text = if msg.text == "agy-orchestrator info" || msg.text == "env -u PORT -u ADDR -u IP /home/wimvm/.local/bin/agy-orchestrator info" || msg.text == "/home/wimvm/.local/bin/agy-orchestrator info" {
+                                                        "📋 System Info".to_string()
+                                                    } else if msg.text == "agy-orchestrator list" || msg.text == "env -u PORT -u ADDR -u IP agy-orchestrator list" {
+                                                        "🔍 List Projects".to_string()
+                                                    } else if msg.text == "agy-orchestrator issue --list" {
+                                                        "🐛 Active Issues".to_string()
+                                                    } else {
+                                                        msg.text.clone()
+                                                    };
+                                                    rsx! { p { class: "text-sm leading-relaxed", "{display_text}" } }
                                                 } else {
                                                     render_markdown(&msg.text)
                                                 }
@@ -665,8 +679,7 @@ pub fn ChatTab(
                             button {
                                 class: "px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-850 hover:bg-indigo-950/40 hover:text-indigo-300 border border-slate-800 hover:border-indigo-800/50 transition-all duration-200 cursor-pointer flex items-center gap-1.5 active:scale-95 shadow-sm text-slate-300",
                                 onclick: move |_| {
-                                    input_text.set("/home/wimvm/.local/bin/agy-orchestrator info".to_string());
-                                    send_message();
+                                    send_custom_message("agy-orchestrator info".to_string());
                                 },
                                 span { "🗼" }
                                 span { "System Info" }
@@ -674,8 +687,7 @@ pub fn ChatTab(
                             button {
                                 class: "px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-850 hover:bg-indigo-950/40 hover:text-indigo-300 border border-slate-800 hover:border-indigo-800/50 transition-all duration-200 cursor-pointer flex items-center gap-1.5 active:scale-95 shadow-sm text-slate-300",
                                 onclick: move |_| {
-                                    input_text.set("env -u PORT -u ADDR -u IP agy-orchestrator list".to_string());
-                                    send_message();
+                                    send_custom_message("agy-orchestrator list".to_string());
                                 },
                                 span { "📋" }
                                 span { "List Projects" }
@@ -683,8 +695,7 @@ pub fn ChatTab(
                             button {
                                 class: "px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-850 hover:bg-indigo-950/40 hover:text-indigo-300 border border-slate-800 hover:border-indigo-800/50 transition-all duration-200 cursor-pointer flex items-center gap-1.5 active:scale-95 shadow-sm text-slate-300",
                                 onclick: move |_| {
-                                    input_text.set("agy-orchestrator issue --list".to_string());
-                                    send_message();
+                                    send_custom_message("agy-orchestrator issue --list".to_string());
                                 },
                                 span { "🐛" }
                                 span { "Active Issues" }

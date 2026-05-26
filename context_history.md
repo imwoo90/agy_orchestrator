@@ -247,3 +247,26 @@ In the live log viewer, when new events or updates arrive or when first entering
    * Restarted the systemd service and spawned the updated dashboard process on port 8080, successfully upgrading the running build version to `dev45`.
 3. **Validation**: Verified build and tests pass successfully.
 
+
+
+# 📅 History log from 2026-05-26 10:07:25 (Spawned at 2026-05-25T23:15:48+09:00)
+
+# Evolution Report: Normalizing and Improving Chat Assistant UI/UX
+
+## Problem
+1. **Raw CLI Command Exposure**: The quick action buttons for JIT commands previously typed raw command strings like `env -u PORT -u ADDR -u IP agy-orchestrator list` or `/home/wimvm/.local/bin/agy-orchestrator info` directly into the chat prompt, which looked awkward and exposed command line details in the user's bubble.
+2. **Environment Variable Panic Bug**: The server function `send_chat_message` set `PORT` to `"8080"` and `ADDR` to `"0.0.0.0"` in the child process's environment when executing subcommands. This caused subcommands (which are CLI binaries checking for `PORT` presence to determine if they are web servers) to think they were Dioxus web servers and panic with "Failed to bind to address 0.0.0.0:8080".
+3. **Scrollbar discrepancy**: The Rooms list and Message Stream list containers did not have custom glassmorphic scrollbar styling, using the browser's default scrollbars instead.
+4. **Synchronous Signal Read Race Condition**: Quick action buttons set `input_text` and then immediately called `send_message()`, which risked racing signal write propagation.
+
+## Solution
+1. **Subprocess Env Fix ([main.rs](file:///home/wimvm/works/agy_orchestrator/src/main.rs))**:
+   * Removed setting `PORT` and `ADDR` in `send_chat_message` subcommand command execution.
+   * Explicitly added `env_remove("PORT")`, `env_remove("ADDR")`, and `env_remove("IP")` so child CLI processes are cleanly isolated and run in standard CLI execution mode.
+2. **Quick Action Prompt Cleanup & display formatting ([chat.rs](file:///home/wimvm/works/agy_orchestrator/src/frontend/components/chat.rs))**:
+   * Refactored buttons to send simple, clean commands (e.g. `agy-orchestrator info`, `agy-orchestrator list`, `agy-orchestrator issue --list`).
+   * Added rendering override logic in the message bubble list to parse user messages; if a user message matches these commands, it renders a beautiful human-readable text label (e.g. `📋 System Info`, `🔍 List Projects`, `🐛 Active Issues`) instead of raw text. This hides technical commands cleanly from the UI bubble log while preserving historical displays.
+3. **Scrollbar styling**: Added `scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent` classes to both Rooms List and Message list scrollable divs.
+4. **Refactored send_message helper**: Created a `send_custom_message(text: String)` closure that accepts raw text, allowing quick action buttons to dispatch messages immediately without modifying/racing the input bar's signal.
+5. **Validation**: Built the whole Dioxus bundle using `dx build --release`, deployed binary and assets, restarted the service daemon on port 8080, and verified with `cargo test`.
+

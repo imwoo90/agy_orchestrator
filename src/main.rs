@@ -756,8 +756,9 @@ async fn send_chat_message(session_id: String, message: String) -> Result<ChatRe
                 
                 let mut exec_cmd = std::process::Command::new("/home/wimvm/.local/bin/agy-orchestrator");
                 exec_cmd.args(&args);
-                exec_cmd.env("PORT", "8080");
-                exec_cmd.env("ADDR", "0.0.0.0");
+                exec_cmd.env_remove("PORT");
+                exec_cmd.env_remove("ADDR");
+                exec_cmd.env_remove("IP");
                 
                 if let Ok(cmd_out) = exec_cmd.output() {
                     let stdout_str = String::from_utf8_lossy(&cmd_out.stdout).to_string();
