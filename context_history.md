@@ -270,3 +270,26 @@ In the live log viewer, when new events or updates arrive or when first entering
 4. **Refactored send_message helper**: Created a `send_custom_message(text: String)` closure that accepts raw text, allowing quick action buttons to dispatch messages immediately without modifying/racing the input bar's signal.
 5. **Validation**: Built the whole Dioxus bundle using `dx build --release`, deployed binary and assets, restarted the service daemon on port 8080, and verified with `cargo test`.
 
+
+
+# 📅 History log from 2026-05-26 10:12:44 (Spawned at 2026-05-25T23:15:48+09:00)
+
+# Evolution Report: Normalizing Chat Tab Layout and Interactions
+
+## Problem
+1. **Double Scrollbar and Hidden Input Bug**: The chat container had a fixed height of `h-[calc(100vh-12rem)]` and restricted width of `max-w-6xl mx-auto`. Because the parent container has vertical padding and scrolls independently, this caused double scrollbars and pushed the input bar off the bottom of the screen on desktop displays.
+2. **Accidental Deletion Risk**: Clicking the trash icon on a room deleted the chat session instantly without any verification prompt, leading to risk of data loss.
+3. **Friction in Chat Starting**: When switching rooms or entering the chat tab, the input text field did not auto-focus, forcing the user to manually click the input field every time.
+
+## Solution
+1. **Layout Normalization ([chat.rs](file:///home/wimvm/works/agy_orchestrator/src/frontend/components/chat.rs))**:
+   * Removed `max-w-6xl mx-auto h-[calc(100vh-12rem)]` limits on the outer ChatTab div.
+   * Applied `h-full w-full` so it fills the available viewport content area dynamically, matching the other full-width dashboard tabs. This aligns the input bar cleanly at the bottom and eliminates double scrollbar conflicts.
+2. **Room Delete Confirmation**:
+   * Added a client-side JS evaluation using `confirm('이 대화방을 정말로 삭제하시겠습니까?')`.
+   * The spawn block waits for the dialog result asynchronously via `eval.recv::<bool>()`. The deletion is cancelled if the user declines.
+3. **Auto-Focus input field**:
+   * Assigned `id: "chat-input-field"` to the text input component.
+   * Inside the existing messages/room change `use_effect` hook, added `document.getElementById('chat-input-field').focus()` alongside the bottom scroll logic. The cursor now automatically focuses the chat input on room changes and mounting.
+4. **Validation**: Built and compiled via Dioxus CLI release build, deployed binary & assets, restarted the service daemon, and confirmed tests pass.
+

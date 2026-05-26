@@ -297,12 +297,16 @@ pub fn ChatTab(
         let _ = active_session_id.read();
         let _ = messages.read();
         
-        // Scroll the message stream area to the bottom
+        // Scroll the message stream area to the bottom & focus input
         let _ = eval("
             setTimeout(() => {
                 let el = document.getElementById('chat-messages-container');
                 if (el) {
                     el.scrollTop = el.scrollHeight;
+                }
+                let input = document.getElementById('chat-input-field');
+                if (input) {
+                    input.focus();
                 }
             }, 50);
         ");
@@ -421,7 +425,7 @@ pub fn ChatTab(
     };
 
     rsx! {
-        div { class: "flex h-[calc(100vh-12rem)] max-w-6xl mx-auto bg-gradient-to-br from-slate-900/60 to-slate-950/80 border border-slate-800/80 rounded-2xl overflow-hidden shadow-2xl backdrop-blur-md",
+        div { class: "flex h-full w-full bg-gradient-to-br from-slate-900/60 to-slate-950/80 border border-slate-800/80 rounded-2xl overflow-hidden shadow-2xl backdrop-blur-md",
             
             // Sidebar
             div { class: "w-64 border-r border-slate-800/70 flex flex-col bg-slate-950/45 shrink-0",
@@ -509,6 +513,11 @@ pub fn ChatTab(
                                                 let mut sessions_sig = chat_sessions;
                                                 let mut msgs = messages;
                                                 spawn(async move {
+                                                    let mut eval_confirm = eval("dioxus.send(confirm('이 대화방을 정말로 삭제하시겠습니까?'));");
+                                                    let confirmed = eval_confirm.recv::<bool>().await.unwrap_or(false);
+                                                    if !confirmed {
+                                                        return;
+                                                    }
                                                     if crate::delete_chat_session(s_id.clone()).await.is_ok() {
                                                         msgs.write().remove(&s_id);
                                                         if let Ok(s) = crate::get_chat_sessions().await {
@@ -713,6 +722,7 @@ pub fn ChatTab(
                         // Input Bar
                         div { class: "bg-slate-900/60 border-t border-slate-850/80 p-4.5 flex gap-3 items-center backdrop-blur-md shrink-0",
                             input {
+                                id: "chat-input-field",
                                 class: "flex-1 bg-slate-950 border border-slate-850 rounded-xl px-4.5 py-3 text-sm text-slate-200 placeholder:text-slate-550 focus:outline-none focus:border-indigo-500/60 focus:ring-1 focus:ring-indigo-500/20 transition-all shadow-inner",
                                 placeholder: "Ask your JIT secretary a question or command...",
                                 value: "{input_text}",
