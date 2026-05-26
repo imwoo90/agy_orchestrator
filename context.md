@@ -20,6 +20,7 @@ JIT Memory Agent Orchestrator & Knowledge Vault for AI coding assistants.
   - Isolated UX states: HashMap-based loading flags per room and active session filtering to prevent cross-room message bleed-through.
   - Robust Session Mapping & Simple Chat Fast-Path: Unifies session promotion, filters out draft directories to prevent path errors, and strips heavy prompts context for simple chats to reduce TTFT/latency.
   - Log Tab Auto-Scroll: Automatically scrolls the terminal container to the bottom on mounting and log updates so the latest notifications are instantly visible.
+  - Chat Tab Auto-Scroll: Automatically scrolls the message list container to the bottom when entering the chat tab, switching rooms, or when new messages arrive.
 
 ## Project Playbook (AGENTS.md)
 Rules for AI developers:

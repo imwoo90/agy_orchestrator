@@ -292,6 +292,22 @@ pub fn ChatTab(
     let mut input_text = use_signal(String::new);
     let is_loading = use_signal(HashMap::<String, bool>::new);
 
+    use_effect(move || {
+        // Track active_session_id and messages to trigger when they change
+        let _ = active_session_id.read();
+        let _ = messages.read();
+        
+        // Scroll the message stream area to the bottom
+        let _ = eval("
+            setTimeout(() => {
+                let el = document.getElementById('chat-messages-container');
+                if (el) {
+                    el.scrollTop = el.scrollHeight;
+                }
+            }, 50);
+        ");
+    });
+
     let active_id_opt = active_session_id.read().clone();
     let active_loading = if let Some(ref id) = active_id_opt {
         is_loading.read().get(id).copied().unwrap_or(false)
@@ -583,7 +599,9 @@ pub fn ChatTab(
                         }
 
                         // Message Stream Area
-                        div { class: "flex-1 overflow-y-auto p-6 flex flex-col gap-6",
+                        div {
+                            id: "chat-messages-container",
+                            class: "flex-1 overflow-y-auto p-6 flex flex-col gap-6",
                             for msg in display_messages.iter() {
                                 div {
                                     class: format!("flex gap-3.5 max-w-[85%] {}", if msg.is_user { "self-end flex-row-reverse" } else { "self-start" }),

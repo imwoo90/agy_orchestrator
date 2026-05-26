@@ -225,3 +225,25 @@ In the live log viewer, when new events or updates arrive or when first entering
 3. **Javascript Execution**: Runs a browser `eval` command with a slight delay (`setTimeout` of 50ms) to ensure Dioxus has updated the DOM, then scrolls `live-logs-container` to its maximum `scrollTop`.
 4. **Validation**: Compiled and tested locally. Verified all test targets compile and pass successfully. Re-deployed the compiled release binary and restarted the local `agy-orchestrator` service daemon.
 
+
+
+# 📅 History log from 2026-05-26 10:01:22 (Spawned at 2026-05-25T23:15:48+09:00)
+
+# Evolution Report: Auto-Scroll to Bottom in Secretary Chat Tab
+
+## Problem
+1. The dashboard web page was not updating to the latest build after a refresh because the old dashboard process (PID 491151) remained running on port 8080 and served outdated assets, while the new daemon service was running but couldn't bind port 8080.
+2. In the AI Secretary Chat tab, when first entering the tab, switching rooms, or when new messages were sent/received, the scroll container did not automatically scroll to the bottom, requiring manual scroll.
+
+## Solution
+1. **Chat Auto-Scroll ([chat.rs](file:///home/wimvm/works/agy_orchestrator/src/frontend/components/chat.rs))**:
+   * Assigned `id: "chat-messages-container"` to the main message list div container.
+   * Integrated a Dioxus `use_effect` hook inside the `ChatTab` component. The effect tracks changes to `active_session_id` and `messages` signals.
+   * On any updates, it executes a browser `eval` command with a slight delay (`setTimeout` of 50ms) to ensure Dioxus updates the DOM, then scrolls the message container to the bottom.
+2. **Dashboard Lifecycle Fix**:
+   * Terminated the zombie dashboard process holding port 8080 (`kill -9 491151`).
+   * Performed a complete Dioxus build (`dx build --release`) to generate both server binary and WASM/JS/CSS public assets.
+   * Copied client public assets to `/home/wimvm/.local/bin/public` and the server binary to `/home/wimvm/.local/bin/agy-orchestrator`.
+   * Restarted the systemd service and spawned the updated dashboard process on port 8080, successfully upgrading the running build version to `dev45`.
+3. **Validation**: Verified build and tests pass successfully.
+
