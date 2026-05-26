@@ -52,3 +52,5 @@ Whenever you complete an issue resolution or change:
   ```bash
   cargo run --no-default-features --features server -- dashboard
   ```
+* **Tool Invocation Argument Formatting**: When executing platform tools (such as `view_file`, `list_dir`, `write_to_file`, `replace_file_content`, etc.), you MUST pass raw string paths without literal double quotes or escaped backslashes in the arguments JSON. For example, pass `"AbsolutePath": "/home/wimvm/works/agy_orchestrator/src/main.rs"`, NOT `"AbsolutePath": "\"/home/wimvm/works/agy_orchestrator/src/main.rs\""`. Double-quoted path values will cause sandbox permission validation to fail with a timeout!
+
