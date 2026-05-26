@@ -358,3 +358,21 @@ In the live log viewer, when new events or updates arrive or when first entering
 - Confirmed that the web dashboard is listening on `0.0.0.0:8080` (PID: 546064).
 - Verified everything is healthy and fully operational.
 
+
+
+# 📅 History log from 2026-05-27 06:28:48 (Spawned at 2026-05-25T23:15:48+09:00)
+
+# Integration Report: Fix Self-Kill during Dashboard Remote Upgrade
+
+## Changes Made
+1. **Prevented Self-Kill in Upgrade Flow**:
+   - Modified `restart_dashboard_process` in `src/backend/upgrade.rs` to query the current process ID (`std::process::id()`).
+   - If the dashboard target PID matches the current process's PID (which occurs when the remote upgrade is triggered directly from the web dashboard UI), the self-kill step is skipped.
+   - This prevents the server process from killing itself mid-request, enabling the server function `trigger_remote_upgrade` to return a successful HTTP response to the browser instead of aborting and causing a `TypeError: Failed to fetch` client error.
+   - The dashboard is then restarted gracefully via the background tokio task after a 1-second delay.
+
+## Verification
+- Verified that the codebase compiles and passes cargo test gates.
+- Built and installed the binary using `self-upgrade`.
+- Verified that both the daemon and dashboard are up and running healthily.
+

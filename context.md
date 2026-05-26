@@ -19,6 +19,7 @@ JIT Memory Agent Orchestrator & Knowledge Vault for AI coding assistants.
   - Desktop-optimized responsive layout (`h-full w-full overflow-hidden`) eliminating double scrollbars.
   - Command Masking: Mask technical CLI command prompts (like info/list) in the chat bubble UI with beautiful human-readable labels.
 - **Port Conflict Fix**: Prevents environment pollution by explicitly clearing `PORT`, `ADDR`, `IP`, and `DIOXUS_ACTIVE` from command builders when spawning subcommands and background daemons from the dashboard context.
+- **Self-Kill Prevention during Upgrade**: Avoids self-killing the dashboard process when a remote upgrade is initiated from the UI, ensuring the upgrade server function returns a successful response to the browser before triggering a clean background restart.
 
 ## Project Playbook (AGENTS.md)
 Rules for AI developers:
