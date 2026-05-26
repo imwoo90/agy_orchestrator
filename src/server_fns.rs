@@ -609,7 +609,18 @@ pub async fn send_chat_message(session_id: String, message: String) -> Result<Ch
         let lower_msg = msg_trimmed.to_lowercase();
 
         // Short-circuit: direct agy-orchestrator commands execution
-        if lower_msg.contains("agy-orchestrator") {
+        let is_direct_cmd = {
+            let parts: Vec<&str> = msg_trimmed.split_whitespace().collect();
+            if let Some(first) = parts.first() {
+                let first_lower = first.to_lowercase();
+                first_lower == "agy-orchestrator" || 
+                first_lower.ends_with("/agy-orchestrator") ||
+                first_lower.ends_with("\\agy-orchestrator")
+            } else {
+                false
+            }
+        };
+        if is_direct_cmd {
             let cmd_parts: Vec<&str> = msg_trimmed.split_whitespace().collect();
             if !cmd_parts.is_empty() {
                 let mut args = Vec::new();
