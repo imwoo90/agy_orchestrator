@@ -1089,25 +1089,33 @@ fn get_transcript_content_by_id(conversation_id: &str) -> Result<String, String>
 fn main() -> std::io::Result<()> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let has_args = std::env::args().len() > 1;
-        let is_dioxus_env = std::env::var("PORT").is_ok() || std::env::var("ADDR").is_ok() || std::env::var("IP").is_ok() || std::env::var("DIOXUS_ACTIVE").is_ok();
+        use clap::Parser;
+        let cli_parsed = backend::cli::Cli::try_parse();
 
-        if !has_args || is_dioxus_env {
-            // Under dx serve or when direct execution with no args is called, boot up Dioxus.
-            dioxus::launch(frontend::App);
-            Ok(())
-        } else {
-            use clap::Parser;
-            let cli_cmd = backend::cli::Cli::parse();
-            match backend::cli::run_cli(cli_cmd)? {
-                backend::cli::CliResult::Exit => Ok(()),
-                backend::cli::CliResult::StartDashboard { port } => {
-                    // Set port and address in environment so dioxus can find it
-                    std::env::set_var("PORT", port.to_string());
-                    std::env::set_var("ADDR", "0.0.0.0");
-                    std::env::set_var("IP", "0.0.0.0");
+        match cli_parsed {
+            Ok(cli_cmd) => {
+                match backend::cli::run_cli(cli_cmd)? {
+                    backend::cli::CliResult::Exit => Ok(()),
+                    backend::cli::CliResult::StartDashboard { port } => {
+                        // Set port and address in environment so dioxus can find it
+                        std::env::set_var("PORT", port.to_string());
+                        std::env::set_var("ADDR", "0.0.0.0");
+                        std::env::set_var("IP", "0.0.0.0");
+                        dioxus::launch(frontend::App);
+                        Ok(())
+                    }
+                }
+            }
+            Err(e) => {
+                let has_args = std::env::args().len() > 1;
+                let is_dioxus_env = std::env::var("PORT").is_ok() || std::env::var("ADDR").is_ok() || std::env::var("IP").is_ok() || std::env::var("DIOXUS_ACTIVE").is_ok();
+
+                if !has_args || is_dioxus_env {
+                    // Under dx serve or when direct execution with no args is called, boot up Dioxus.
                     dioxus::launch(frontend::App);
                     Ok(())
+                } else {
+                    e.exit();
                 }
             }
         }

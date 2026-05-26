@@ -144,7 +144,7 @@ pub fn App() -> Element {
         document::Link { rel: "stylesheet", href: asset!("/assets/tailwind.css") }
         document::Link { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" }
 
-        div { class: "bg-slate-950 text-slate-100 min-h-screen font-sans flex flex-col selection:bg-indigo-500 selection:text-white",
+        div { class: "bg-slate-950 text-slate-100 h-screen overflow-hidden font-sans flex flex-col selection:bg-indigo-500 selection:text-white",
             // Header Bar
             header { class: "bg-slate-900/80 backdrop-blur-md border-b border-slate-800/80 px-6 py-4 flex items-center justify-between sticky top-0 z-50",
                 div { class: "flex items-center gap-3",
