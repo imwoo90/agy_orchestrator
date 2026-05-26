@@ -335,7 +335,7 @@ pub fn ChatTab(
         let mut issues_sig = issues;
         let mut chat_sessions_sig = chat_sessions;
         let active_id_spawn = active_id.clone();
-        let active_session_id_ref = active_session_id;
+        let mut active_session_id_ref = active_session_id;
 
         spawn(async move {
             msg_list.write().push(ChatMessage {
@@ -346,12 +346,16 @@ pub fn ChatTab(
             input.set(String::new());
             loading.write().insert(active_id_spawn.clone(), true);
 
+            let mut final_id = active_id_spawn.clone();
             match crate::send_chat_message(active_id_spawn.clone(), text).await {
-                Ok(reply) => {
-                    if Some(active_id_spawn.clone()) == *active_session_id_ref.read() {
+                Ok(response) => {
+                    final_id = response.actual_session_id.clone();
+                    active_session_id_ref.set(Some(response.actual_session_id.clone()));
+
+                    if Some(response.actual_session_id.clone()) == *active_session_id_ref.read() {
                         msg_list.write().push(ChatMessage {
                             is_user: false,
-                            text: reply,
+                            text: response.reply,
                             timestamp: chrono::Local::now().format("%H:%M").to_string(),
                         });
                     }
@@ -374,6 +378,7 @@ pub fn ChatTab(
                 }
             }
             loading.write().insert(active_id_spawn.clone(), false);
+            loading.write().insert(final_id, false);
         });
     };
 
