@@ -852,68 +852,72 @@ async fn send_chat_message(session_id: String, message: String) -> Result<ChatRe
             });
         }
 
-        // Check if simple chat
-        let is_simple_chat = {
-            let lower = msg_trimmed.to_lowercase();
-            let is_short = msg_trimmed.chars().count() < 40;
-            
-            let has_orchestration_keywords = 
-                lower.contains("task") || 
-                lower.contains("issue") || 
-                lower.contains("project") || 
-                lower.contains("status") || 
-                lower.contains("health") || 
-                lower.contains("upgrade") || 
-                lower.contains("update") || 
-                lower.contains("list") || 
-                lower.contains("harness") || 
-                lower.contains("daemon") || 
-                lower.contains("log") || 
-                lower.contains("context") ||
-                lower.contains("일감") ||
-                lower.contains("이슈") ||
-                lower.contains("프로젝트") ||
-                lower.contains("상태") ||
-                lower.contains("업그레이드") ||
-                lower.contains("업데이트") ||
-                lower.contains("목록") ||
-                lower.contains("하네스") ||
-                lower.contains("데몬") ||
-                lower.contains("로그");
-            
-            is_short && !has_orchestration_keywords
-        };
-
-        let system_instruction = if is_simple_chat {
-            "You are a friendly personal secretary AI assistant. Respond to the user's message directly, briefly, and instantly in the same language. Do not plan, do not write code, and do not use tools.".to_string()
+        let prompt_payload = if msg_trimmed.starts_with('/') {
+            msg_trimmed.to_string()
         } else {
-            let global_instr_path = backend::vault::get_base_dir().join("memory/system_instructions.md");
-            let global_instr = std::fs::read_to_string(global_instr_path).unwrap_or_default();
+            // Check if simple chat
+            let is_simple_chat = {
+                let lower = msg_trimmed.to_lowercase();
+                let is_short = msg_trimmed.chars().count() < 40;
+                
+                let has_orchestration_keywords = 
+                    lower.contains("task") || 
+                    lower.contains("issue") || 
+                    lower.contains("project") || 
+                    lower.contains("status") || 
+                    lower.contains("health") || 
+                    lower.contains("upgrade") || 
+                    lower.contains("update") || 
+                    lower.contains("list") || 
+                    lower.contains("harness") || 
+                    lower.contains("daemon") || 
+                    lower.contains("log") || 
+                    lower.contains("context") ||
+                    lower.contains("일감") ||
+                    lower.contains("이슈") ||
+                    lower.contains("프로젝트") ||
+                    lower.contains("상태") ||
+                    lower.contains("업그레이드") ||
+                    lower.contains("업데이트") ||
+                    lower.contains("목록") ||
+                    lower.contains("하네스") ||
+                    lower.contains("데몬") ||
+                    lower.contains("로그");
+                
+                is_short && !has_orchestration_keywords
+            };
+
+            let system_instruction = if is_simple_chat {
+                "You are a friendly personal secretary AI assistant. Respond to the user's message directly, briefly, and instantly in the same language. Do not plan, do not write code, and do not use tools.".to_string()
+            } else {
+                let global_instr_path = backend::vault::get_base_dir().join("memory/system_instructions.md");
+                let global_instr = std::fs::read_to_string(global_instr_path).unwrap_or_default();
+                format!(
+                    "You are the Central Orchestrator (Personal Secretary) AI assistant for the user, communicating through the dashboard chat interface.\n\
+                    To answer the user's questions or perform their requests, you should retrieve knowledge and status in a Just-in-Time (JIT) manner by running terminal commands using your run_command tool.\n\n\
+                    Here are the primary commands you can execute to query the orchestrator's state JIT:\n\
+                    - `/home/wimvm/.local/bin/agy-orchestrator info` to get the system, daemon, and dashboard status.\n\
+                    - `/home/wimvm/.local/bin/agy-orchestrator list` to get the list of registered projects.\n\
+                    - `/home/wimvm/.local/bin/agy-orchestrator get-context --name <project>` to get the path, goal, and status of a specific project.\n\
+                    - `/home/wimvm/.local/bin/agy-orchestrator issue --list` to get the current list of evolution tasks and issues.\n\
+                    - `/home/wimvm/.local/bin/agy-orchestrator query-memory --query \"<keywords>\"` to find user preferences or design guidelines in the memory vault.\n\n\
+                    If the user asks to create or register a task, you can do so by running:\n\
+                    - `/home/wimvm/.local/bin/agy-orchestrator issue --create \"<Title>\" --body \"<Description>\"`\n\
+                    (Alternatively, you can append `[CREATE_TASK: Title | Body]` at the very end of your final response text, and the system will automatically parse and register it for you).\n\n\
+                    CRITICAL: If the user is just saying hello, greeting you, testing the chat, or asking simple questions that do not require orchestrator status, DO NOT write implementation plans, DO NOT write task lists, and DO NOT run any tools. Just answer directly and instantly in a conversational manner.\n\
+                    Only run JIT commands if they specifically ask for system status, projects list, or issue management. Do not guess status.\n\n\
+                    --- GLOBAL OPERATIONAL GUIDELINES ---\n\
+                    {}",
+                    global_instr
+                )
+            };
+
             format!(
-                "You are the Central Orchestrator (Personal Secretary) AI assistant for the user, communicating through the dashboard chat interface.\n\
-                To answer the user's questions or perform their requests, you should retrieve knowledge and status in a Just-in-Time (JIT) manner by running terminal commands using your run_command tool.\n\n\
-                Here are the primary commands you can execute to query the orchestrator's state JIT:\n\
-                - `/home/wimvm/.local/bin/agy-orchestrator info` to get the system, daemon, and dashboard status.\n\
-                - `/home/wimvm/.local/bin/agy-orchestrator list` to get the list of registered projects.\n\
-                - `/home/wimvm/.local/bin/agy-orchestrator get-context --name <project>` to get the path, goal, and status of a specific project.\n\
-                - `/home/wimvm/.local/bin/agy-orchestrator issue --list` to get the current list of evolution tasks and issues.\n\
-                - `/home/wimvm/.local/bin/agy-orchestrator query-memory --query \"<keywords>\"` to find user preferences or design guidelines in the memory vault.\n\n\
-                If the user asks to create or register a task, you can do so by running:\n\
-                - `/home/wimvm/.local/bin/agy-orchestrator issue --create \"<Title>\" --body \"<Description>\"`\n\
-                (Alternatively, you can append `[CREATE_TASK: Title | Body]` at the very end of your final response text, and the system will automatically parse and register it for you).\n\n\
-                CRITICAL: If the user is just saying hello, greeting you, testing the chat, or asking simple questions that do not require orchestrator status, DO NOT write implementation plans, DO NOT write task lists, and DO NOT run any tools. Just answer directly and instantly in a conversational manner.\n\
-                Only run JIT commands if they specifically ask for system status, projects list, or issue management. Do not guess status.\n\n\
-                --- GLOBAL OPERATIONAL GUIDELINES ---\n\
-                {}",
-                global_instr
+                "[System Instruction: {}]\n\nUser Message: {}",
+                system_instruction,
+                msg_trimmed
             )
         };
-
-        let prompt_payload = format!(
-            "[System Instruction: {}]\n\nUser Message: {}",
-            system_instruction,
-            msg_trimmed
-        );
 
         let brain_dir = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(&actual_session_id);
         let transcript_path = brain_dir.join(".system_generated/logs/transcript_full.jsonl");
