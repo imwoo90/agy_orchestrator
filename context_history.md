@@ -126,3 +126,26 @@ We resolved a critical conversation failure bug that happened on existing UUID c
 - Run `cargo test --all-targets` -> 4 tests passed, confirming no regressions.
 - Completed evolution harness and self-upgrade. Verified that the updated dashboard successfully restarted and is serving the fix on port 8080.
 
+
+
+# 📅 History log from 2026-05-26 09:16:35 (Spawned at 2026-05-25T23:15:48+09:00)
+
+# Completion Report: Isolate Loading State by Session & Prevents Cross-Session UI Updates
+
+## Description of Work
+We resolved a critical UX concurrency bug and fixed local dev version build tracking triggers:
+
+1. **UX Concurrency Fix (HashMap-based loading & Active Session Filter)**:
+   - Modified `src/frontend/components/chat.rs`.
+   - Replaced the single-boolean `is_loading` state with a `HashMap<String, bool>` mapping each session ID to its loading state.
+   - Now, if Room A is waiting for a response (loading), switching to Room B activates the send button instantly, as Room B is not loading.
+   - Added an active-session match check (`if Some(active_id_spawn.clone()) == *active_session_id_ref.read()`) before pushing incoming AI responses to the current message stream signal. This prevents Room A's response from bleeding into Room B's view while Room B is active.
+
+2. **Ensured build.rs rerun on source changes**:
+   - Added `println!("cargo:rerun-if-changed=src/");` in `build.rs` to enforce recompilation of `build.rs` whenever any source file under `src/` changes.
+   - Successfully verified that consecutive compilation commands now increment the dev version counters correctly (currently upgraded to `v0.1.27-dev6`).
+
+## Verification
+- Checked unit and integration tests -> all passed.
+- Upgraded the binary and verified that dashboard (PID: 469340) restarted on port 8080.
+
