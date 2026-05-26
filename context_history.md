@@ -338,3 +338,23 @@ In the live log viewer, when new events or updates arrive or when first entering
 - Fixed the issue by adding `is_loading.read()` to the `use_effect` dependency list in `src/frontend/components/chat.rs`.
 - Verified compilation (`cargo check`), run unit tests (`cargo test`), and performed clippy lint checks (`cargo clippy`). All checks passed with zero errors or warnings.
 
+
+
+# 📅 History log from 2026-05-27 06:13:55 (Spawned at 2026-05-25T23:15:48+09:00)
+
+# Integration Report: Fix Subcommand Environment Pollution & Start Dashboard
+
+## Changes Made
+1. **Isolated Dioxus Environment in Subcommands**:
+   - Modified `src/main.rs` and `src/backend/commands/daemon.rs` to explicitly strip Dioxus-related environment variables (`PORT`, `ADDR`, `IP`, and `DIOXUS_ACTIVE`) when spawning subcommands and background daemons.
+   - This ensures that spawned CLI commands execute as command-line tools rather than incorrectly starting up new web servers on port 8080.
+2. **Resolved Port Conflicts**:
+   - Terminated the active port 8080 conflict process (PID 541161, which was an `agy-orchestrator info` command behaving as a zombie web server due to environment variable inheritance).
+3. **Compiled & Launched Dashboard**:
+   - Executed `self-upgrade` to compile the new version with `dx build --release`, install the binary, and start the dashboard web server on port 8080.
+
+## Verification
+- Confirmed that the systemd user service background daemon is `RUNNING` (PID: 546051).
+- Confirmed that the web dashboard is listening on `0.0.0.0:8080` (PID: 546064).
+- Verified everything is healthy and fully operational.
+
