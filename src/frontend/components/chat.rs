@@ -1,5 +1,6 @@
 use dioxus::prelude::*;
 use dioxus::document::eval;
+use std::collections::HashMap;
 use crate::frontend::app::{Issue, ChatMessage, ChatSession};
 
 
@@ -289,9 +290,14 @@ pub fn ChatTab(
     chat_sessions: Signal<Vec<ChatSession>>,
 ) -> Element {
     let mut input_text = use_signal(String::new);
-    let is_loading = use_signal(|| false);
+    let is_loading = use_signal(HashMap::<String, bool>::new);
 
     let active_id_opt = active_session_id.read().clone();
+    let active_loading = if let Some(ref id) = active_id_opt {
+        is_loading.read().get(id).copied().unwrap_or(false)
+    } else {
+        false
+    };
     let current_session_title = if let Some(ref id) = active_id_opt {
         chat_sessions.read().iter().find(|s| s.id == *id).map(|s| s.title.clone()).unwrap_or_else(|| "AI Personal Secretary".to_string())
     } else {
@@ -313,20 +319,23 @@ pub fn ChatTab(
 
     let send_message = move || {
         let text = input_text.read().trim().to_string();
-        if text.is_empty() || *is_loading.read() {
-            return;
-        }
-
         let active_id = match active_session_id.read().clone() {
             Some(id) => id,
             None => return,
         };
+
+        let currently_loading = is_loading.read().get(&active_id).copied().unwrap_or(false);
+        if text.is_empty() || currently_loading {
+            return;
+        }
 
         let mut msg_list = messages;
         let mut loading = is_loading;
         let mut input = input_text;
         let mut issues_sig = issues;
         let mut chat_sessions_sig = chat_sessions;
+        let active_id_spawn = active_id.clone();
+        let active_session_id_ref = active_session_id;
 
         spawn(async move {
             msg_list.write().push(ChatMessage {
@@ -335,15 +344,17 @@ pub fn ChatTab(
                 timestamp: chrono::Local::now().format("%H:%M").to_string(),
             });
             input.set(String::new());
-            loading.set(true);
+            loading.write().insert(active_id_spawn.clone(), true);
 
-            match crate::send_chat_message(active_id, text).await {
+            match crate::send_chat_message(active_id_spawn.clone(), text).await {
                 Ok(reply) => {
-                    msg_list.write().push(ChatMessage {
-                        is_user: false,
-                        text: reply,
-                        timestamp: chrono::Local::now().format("%H:%M").to_string(),
-                    });
+                    if Some(active_id_spawn.clone()) == *active_session_id_ref.read() {
+                        msg_list.write().push(ChatMessage {
+                            is_user: false,
+                            text: reply,
+                            timestamp: chrono::Local::now().format("%H:%M").to_string(),
+                        });
+                    }
                     
                     if let Ok(sessions) = crate::get_chat_sessions().await {
                         chat_sessions_sig.set(sessions);
@@ -353,14 +364,16 @@ pub fn ChatTab(
                     }
                 }
                 Err(e) => {
-                    msg_list.write().push(ChatMessage {
-                        is_user: false,
-                        text: format!("⚠️ Error: {}", e),
-                        timestamp: chrono::Local::now().format("%H:%M").to_string(),
-                    });
+                    if Some(active_id_spawn.clone()) == *active_session_id_ref.read() {
+                        msg_list.write().push(ChatMessage {
+                            is_user: false,
+                            text: format!("⚠️ Error: {}", e),
+                            timestamp: chrono::Local::now().format("%H:%M").to_string(),
+                        });
+                    }
                 }
             }
-            loading.set(false);
+            loading.write().insert(active_id_spawn.clone(), false);
         });
     };
 
@@ -506,27 +519,32 @@ pub fn ChatTab(
                                         let mut msg_list = messages;
                                         let mut loading = is_loading;
                                         let active_id_reset = active_id.clone();
+                                        let active_session_id_ref = active_session_id;
                                         spawn(async move {
-                                            loading.set(true);
-                                            match crate::send_chat_message(active_id_reset, "reset session".to_string()).await {
+                                            loading.write().insert(active_id_reset.clone(), true);
+                                            match crate::send_chat_message(active_id_reset.clone(), "reset session".to_string()).await {
                                                 Ok(_) => {
-                                                    msg_list.set(vec![
-                                                        ChatMessage {
-                                                            is_user: false,
-                                                            text: "Chat session has been reset. The next message will start a new conversation.".to_string(),
-                                                            timestamp: chrono::Local::now().format("%H:%M").to_string(),
-                                                        }
-                                                    ]);
+                                                    if Some(active_id_reset.clone()) == *active_session_id_ref.read() {
+                                                        msg_list.set(vec![
+                                                            ChatMessage {
+                                                                is_user: false,
+                                                                text: "Chat session has been reset. The next message will start a new conversation.".to_string(),
+                                                                timestamp: chrono::Local::now().format("%H:%M").to_string(),
+                                                            }
+                                                        ]);
+                                                    }
                                                 }
                                                 Err(e) => {
-                                                    msg_list.write().push(ChatMessage {
-                                                        is_user: false,
-                                                        text: format!("⚠️ Error resetting chat: {}", e),
-                                                        timestamp: chrono::Local::now().format("%H:%M").to_string(),
-                                                    });
+                                                    if Some(active_id_reset.clone()) == *active_session_id_ref.read() {
+                                                        msg_list.write().push(ChatMessage {
+                                                            is_user: false,
+                                                            text: format!("⚠️ Error resetting chat: {}", e),
+                                                            timestamp: chrono::Local::now().format("%H:%M").to_string(),
+                                                        });
+                                                    }
                                                 }
                                             }
-                                            loading.set(false);
+                                            loading.write().insert(active_id_reset.clone(), false);
                                         });
                                     },
                                     span { "🗑️" }
@@ -582,7 +600,7 @@ pub fn ChatTab(
                                 }
                             }
 
-                            if *is_loading.read() {
+                            if active_loading {
                                 div { class: "self-start flex gap-3.5 max-w-[85%]",
                                     div { class: "w-8 h-8 rounded-full bg-gradient-to-tr from-slate-850 to-indigo-950 flex items-center justify-center text-indigo-400 border border-indigo-500/20 shadow flex-shrink-0",
                                         svg { class: "w-4.5 h-4.5 text-indigo-400 animate-pulse", fill: "none", stroke: "currentColor", stroke_width: "2", view_box: "0 0 24 24",
@@ -654,14 +672,14 @@ pub fn ChatTab(
                             }
                             button {
                                 class: format!("px-5.5 py-3.5 rounded-xl font-bold text-sm transition-all duration-250 active:scale-95 flex items-center gap-2 cursor-pointer shadow-lg {}",
-                                    if *is_loading.read() {
+                                    if active_loading {
                                         "bg-slate-800 text-slate-500 border border-slate-750"
                                     } else {
                                         "bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-900/30 hover:shadow-indigo-550/30 hover:shadow-xl"
                                     }
                                 ),
                                 onclick: move |_| send_message(),
-                                disabled: *is_loading.read(),
+                                disabled: active_loading,
                                 span { "Send" }
                                 span { class: "text-[12px]", "➔" }
                             }
