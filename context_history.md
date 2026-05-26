@@ -394,3 +394,25 @@ The chat assistant previously prepended system instructions to all user messages
 - Ran `cargo test` and verified all unit tests pass successfully.
 - Registered issue #46 and successfully ran the evolution harness `agy-orchestrator evolution-harness --issue-id 46`, which completed clippy and unit tests gates and pushed changes to the repository.
 
+
+
+# 📅 History log from 2026-05-27 07:04:43 (Spawned at 2026-05-25T23:15:48+09:00)
+
+# Evolution Completion Report: Implement real-time chat progress display via polling (#47)
+
+## Problem Summary
+The chat assistant previously blocked synchronously on the `agy` CLI process execution, leaving the user with only a static loading spinner while tasks were in progress. 
+
+## Resolution Details
+- **Backend changes**:
+  - Implemented a static `DRAFT_MAPPINGS` store in `src/main.rs` to track early-resolved draft IDs mapped to their actual session UUIDs.
+  - Refactored `send_chat_message` to run `agy` asynchronously using `cmd.spawn()`, sleep 300ms, and register the mapped UUID early before awaiting the final output.
+  - Updated `get_chat_history` to resolve the `session_id` using the static mappings.
+- **Frontend changes**:
+  - Implemented a background polling task in `ChatTab` in `src/frontend/components/chat.rs` that queries `get_chat_history` every 1.5 seconds while `is_loading` is `true`.
+  - Replaced manual reply push with a final history fetch from the backend on success to ensure perfect sync with the transcript.
+
+## Verification
+- Ran `cargo test` and verified all unit tests pass with no warnings.
+- Ran the evolution harness (`agy-orchestrator evolution-harness --issue-id 47`) and consolidated context.
+
