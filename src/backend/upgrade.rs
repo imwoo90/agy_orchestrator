@@ -73,7 +73,13 @@ pub fn restart_dashboard_process(current_exe: &Path) -> io::Result<()> {
     cmd.env_remove("PORT")
         .env_remove("ADDR")
         .env_remove("IP")
-        .env_remove("DIOXUS_ACTIVE");
+        .env_remove("DIOXUS_ACTIVE")
+        .env_remove("OUT_DIR");
+    for (key, _) in std::env::vars() {
+        if key.starts_with("CARGO") || key.starts_with("DIOXUS") {
+            cmd.env_remove(key);
+        }
+    }
 
     let log_file_path = std::path::Path::new("/home/wimvm/.local/bin/dashboard.log");
     if let Ok(log_file) = std::fs::OpenOptions::new()
@@ -124,14 +130,20 @@ pub fn restart_daemon_process(current_exe: &Path) -> io::Result<()> {
         println!("Warning: Failed to restart via systemctl, falling back to legacy start...");
     }
 
-    let start_status = Command::new(current_exe)
-        .arg("daemon")
+    let mut cmd = Command::new(current_exe);
+    cmd.arg("daemon")
         .arg("--start")
         .env_remove("PORT")
         .env_remove("ADDR")
         .env_remove("IP")
         .env_remove("DIOXUS_ACTIVE")
-        .status()?;
+        .env_remove("OUT_DIR");
+    for (key, _) in std::env::vars() {
+        if key.starts_with("CARGO") || key.starts_with("DIOXUS") {
+            cmd.env_remove(key);
+        }
+    }
+    let start_status = cmd.status()?;
     if !start_status.success() {
         return Err(io::Error::other("Failed to launch daemon in background"));
     }
