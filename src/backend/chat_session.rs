@@ -105,8 +105,10 @@ pub fn check_and_rename_session(session_id: &str, first_msg: &str) -> Result<(),
     if let Some(session) = sessions.iter_mut().find(|s| s.id == session_id) {
         if session.title == "New Chat" {
             let mut title = first_msg.trim().to_string();
-            if title.len() > 30 {
-                title = format!("{}...", &title[..28]);
+            let char_count = title.chars().count();
+            if char_count > 30 {
+                let sliced: String = title.chars().take(28).collect();
+                title = format!("{}...", sliced);
             }
             session.title = title;
             session.updated_at = chrono::Local::now().to_rfc3339();

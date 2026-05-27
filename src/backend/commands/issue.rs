@@ -29,8 +29,10 @@ pub fn execute(create: Option<String>, body: Option<String>, list: bool, resolve
             println!("{}", "-".repeat(95));
             for issue in &issues {
                 let created = issue.created_at.get(..19).unwrap_or(&issue.created_at).replace('T', " ");
-                let body_truncated = if issue.body.len() > 30 {
-                    format!("{}...", &issue.body[..27])
+                let char_count = issue.body.chars().count();
+                let body_truncated = if char_count > 30 {
+                    let sliced: String = issue.body.chars().take(27).collect();
+                    format!("{}...", sliced)
                 } else {
                     issue.body.clone()
                 };
