@@ -1,0 +1,44 @@
+{
+  "cli_version": "0.7.9 (bfcc111)",
+  "assets": {
+    "/home/wimvm/works/agy_orchestrator/assets/tailwind.css": [
+      {
+        "absolute_source_path": "/home/wimvm/works/agy_orchestrator/assets/tailwind.css",
+        "bundled_path": "tailwind-dxh7ee3936fc0c2bb18.css",
+        "options": {
+          "add_hash": true,
+          "variant": "Unknown"
+        }
+      }
+    ],
+    "/home/wimvm/works/agy_orchestrator/target/dx/agy-orchestrator/release/web/public/wasm/agy-orchestrator.js": [
+      {
+        "absolute_source_path": "/home/wimvm/works/agy_orchestrator/target/dx/agy-orchestrator/release/web/public/wasm/agy-orchestrator.js",
+        "bundled_path": "agy-orchestrator-dxh55e6a6de73dea4.js",
+        "options": {
+          "add_hash": true,
+          "variant": {
+            "Js": {
+              "minify": true,
+              "preload": true,
+              "static_head": false,
+              "module": false
+            }
+          }
+        }
+      }
+    ],
+    "/home/wimvm/works/agy_orchestrator/target/dx/agy-orchestrator/release/web/public/wasm/agy-orchestrator_bg.wasm": [
+      {
+        "absolute_source_path": "/home/wimvm/works/agy_orchestrator/target/dx/agy-orchestrator/release/web/public/wasm/agy-orchestrator_bg.wasm",
+        "bundled_path": "agy-orchestrator_bg-dxh8578577c8e20f3ad.wasm",
+        "options": {
+          "add_hash": true,
+          "variant": "Unknown"
+        }
+      }
+    ]
+  },
+  "android_artifacts": [],
+  "swift_sources": []
+}
