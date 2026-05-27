@@ -5,7 +5,7 @@
 //! 이 모듈은 rexpect를 이용해 PTY를 생성하고, 예상치 못한 interactive 프롬프트에
 //! 자동으로 응답하여 agy 프로세스가 중단 없이 완료되도록 보장합니다.
 
-use std::io;
+use std::io::{self, Write};
 
 /// agy 프로세스 실행 결과
 pub struct AgyOutput {
@@ -43,10 +43,16 @@ const AUTO_APPROVE_PATTERNS: &[(&str, &str)] = &[
 ///
 /// - `args`: `agy` 이후의 인자 목록 (예: `["--dangerously-skip-permissions", "--prompt", "..."]`)
 /// - `timeout_secs`: 전체 실행 타임아웃 (초). None이면 10분.
+/// - `log_path`: 백그라운드 실시간 출력을 기록할 로그 파일 경로.
 ///
 /// 반환: stdout/stderr 통합 출력 문자열과 성공 여부.
-pub fn run_agy_with_pty(args: &[&str], timeout_secs: Option<u64>) -> io::Result<AgyOutput> {
-    let timeout_ms = timeout_secs.unwrap_or(600) * 1000;
+pub fn run_agy_with_pty(
+    args: &[&str],
+    timeout_secs: Option<u64>,
+    log_path: Option<&std::path::Path>,
+) -> io::Result<AgyOutput> {
+    let overall_timeout = std::time::Duration::from_secs(timeout_secs.unwrap_or(600));
+    let start_time = std::time::Instant::now();
 
     // agy 바이너리 경로 결정
     let agy_bin = std::env::var("AGY_BIN")
@@ -56,6 +62,17 @@ pub fn run_agy_with_pty(args: &[&str], timeout_secs: Option<u64>) -> io::Result<
         });
 
     let mut output_buf = String::new();
+    let mut log_file = if let Some(path) = log_path {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        Some(std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?)
+    } else {
+        None
+    };
 
     // AUTO_APPROVE_PATTERNS를 하나의 OR 정규식으로 통합
     let combined_pattern = AUTO_APPROVE_PATTERNS
@@ -67,14 +84,34 @@ pub fn run_agy_with_pty(args: &[&str], timeout_secs: Option<u64>) -> io::Result<
     let mut cmd = std::process::Command::new(&agy_bin);
     cmd.args(args);
 
-    match rexpect::session::spawn_command(cmd, Some(timeout_ms)) {
+    // 500ms의 짧은 read timeout을 설정하여 주기적인 로깅 및 타임아웃 체크를 지원합니다.
+    match rexpect::session::spawn_command(cmd, Some(500)) {
         Ok(mut session) => {
             // 메인 루프: interactive 팝업 감지 → 자동 응답 → EOF까지 반복
             loop {
+                // 전체 실행 시간 초과 검사
+                if start_time.elapsed() >= overall_timeout {
+                    let timeout_msg = format!(
+                        "\n[agy_runner] Error: Overall execution timeout reached ({}s).\n",
+                        overall_timeout.as_secs()
+                    );
+                    output_buf.push_str(&timeout_msg);
+                    if let Some(file) = log_file.as_mut() {
+                        let _ = write!(file, "{}", timeout_msg);
+                        let _ = file.flush();
+                    }
+                    break;
+                }
+
                 match session.exp_regex(&combined_pattern) {
                     Ok((before, matched_str)) => {
                         output_buf.push_str(&before);
                         output_buf.push_str(&matched_str);
+
+                        if let Some(file) = log_file.as_mut() {
+                            let _ = write!(file, "{}{}", before, matched_str);
+                            let _ = file.flush();
+                        }
 
                         // 매칭된 패턴에 해당하는 응답 찾기
                         // matched_str에 패턴 키워드가 포함되는지로 간단히 판별
@@ -94,16 +131,28 @@ pub fn run_agy_with_pty(args: &[&str], timeout_secs: Option<u64>) -> io::Result<
                             // 응답 전송 실패 = 프로세스 종료 신호
                             break;
                         }
+
+                        if let Some(file) = log_file.as_mut() {
+                            let _ = writeln!(file, "{}", response);
+                            let _ = file.flush();
+                        }
                     }
                     Err(rexpect::error::Error::EOF { got, .. }) => {
                         output_buf.push_str(&got);
+                        if let Some(file) = log_file.as_mut() {
+                            let _ = write!(file, "{}", got);
+                            let _ = file.flush();
+                        }
                         // 정상 종료
                         break;
                     }
                     Err(rexpect::error::Error::Timeout { got, .. }) => {
                         output_buf.push_str(&got);
-                        // 타임아웃
-                        break;
+                        if let Some(file) = log_file.as_mut() {
+                            let _ = write!(file, "{}", got);
+                            let _ = file.flush();
+                        }
+                        // 단기 500ms 타임아웃 발생 시, 단순 출력 보존 후 루프 지속
                     }
                     Err(_) => {
                         // 기타 오류
@@ -123,13 +172,13 @@ pub fn run_agy_with_pty(args: &[&str], timeout_secs: Option<u64>) -> io::Result<
                 "[agy_runner] rexpect spawn 실패, fallback Command 사용: {}",
                 e
             );
-            run_agy_fallback(args)
+            run_agy_fallback(args, log_path)
         }
     }
 }
 
 /// rexpect를 사용할 수 없는 환경(PTY 없음 등)에서의 fallback 실행
-fn run_agy_fallback(args: &[&str]) -> io::Result<AgyOutput> {
+fn run_agy_fallback(args: &[&str], log_path: Option<&std::path::Path>) -> io::Result<AgyOutput> {
     let agy_bin = std::env::var("AGY_BIN").unwrap_or_else(|_| {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/home/wimvm".to_string());
         format!("{}/.local/bin/agy", home)
@@ -145,6 +194,10 @@ fn run_agy_fallback(args: &[&str]) -> io::Result<AgyOutput> {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+
+    if let Some(path) = log_path {
+        let _ = std::fs::write(path, &combined);
+    }
 
     Ok(AgyOutput {
         combined_output: combined,
@@ -165,7 +218,7 @@ pub fn spawn_agy_background(
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        match run_agy_with_pty(&args_ref, timeout_secs) {
+        match run_agy_with_pty(&args_ref, timeout_secs, log_path.as_deref()) {
             Ok(result) => {
                 if let Some(log) = log_path {
                     let _ = std::fs::write(&log, &result.combined_output);

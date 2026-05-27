@@ -18,6 +18,9 @@ pub fn execute(name: String, path: String, goal: String) -> io::Result<CliResult
         });
     let project_path_str = project_path.to_string_lossy().to_string();
 
+    // Automatically authorize the newly spawned workspace path
+    let _ = crate::backend::vault::authorize_workspace(&project_path_str);
+
     let mut state = load_state();
     if let Some(info) = state.get_mut(&name) {
         if check_project_status(&name, info) == "running" {
@@ -172,7 +175,24 @@ pub fn execute(name: String, path: String, goal: String) -> io::Result<CliResult
         }
     }
 
-    let full_prompt = format!("{}{}{}{}{}", agents_inject, context_inject, skills_inject, goal, report_instruction);
+    let tool_format_instruction = "\n\n==================================================\n\
+         CRITICAL TOOL CALL FORMATTING RULES:\n\
+         When calling platform tools (e.g., view_file, list_dir, grep_search, write_to_file, replace_file_content):\n\
+         - Do NOT wrap string arguments (like paths or queries) in nested or escaped double quotes.\n\
+         - Correct: \"AbsolutePath\": \"/path/to/file\"\n\
+         - Incorrect: \"AbsolutePath\": \"\\\"/path/to/file\\\"\"\n\
+         Failure to follow this will cause sandbox permission validation to time out and fail!\n\
+         ==================================================\n";
+
+    let full_prompt = format!(
+        "{}{}{}{}{}{}",
+        agents_inject,
+        context_inject,
+        skills_inject,
+        goal,
+        report_instruction,
+        tool_format_instruction
+    );
     let log_file_path = base_dir.join("logs").join(format!("{}.log", name));
     let log_file = File::create(&log_file_path)?;
 

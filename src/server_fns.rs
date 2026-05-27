@@ -821,7 +821,7 @@ pub async fn send_chat_message(session_id: String, message: String) -> Result<Ch
 
         let agy_args_ref: Vec<&str> = agy_args.iter().map(|s| s.as_str()).collect();
         // 타임아웃: 10분
-        let _agy_result = backend::agy_runner::run_agy_with_pty(&agy_args_ref, Some(600))
+        let _agy_result = backend::agy_runner::run_agy_with_pty(&agy_args_ref, Some(600), None)
             .map_err(|e| ServerFnError::new(e.to_string()))?;
 
         let final_session_id = if is_new_session {

@@ -108,6 +108,9 @@ pub fn execute_delegate(parent: String, subtask: String, goal: String) -> io::Re
     }
 
     let project_path_str = parent_info.path.clone();
+
+    // Automatically authorize the subagent workspace path
+    let _ = crate::backend::vault::authorize_workspace(&project_path_str);
     
     // AGENTS.md inheritance
     let parent_agents_path = Path::new(&project_path_str).join("AGENTS.md");
@@ -216,13 +219,23 @@ pub fn execute_delegate(parent: String, subtask: String, goal: String) -> io::Re
         }
     }
 
+    let tool_format_instruction = "\n\n==================================================\n\
+         CRITICAL TOOL CALL FORMATTING RULES:\n\
+         When calling platform tools (e.g., view_file, list_dir, grep_search, write_to_file, replace_file_content):\n\
+         - Do NOT wrap string arguments (like paths or queries) in nested or escaped double quotes.\n\
+         - Correct: \"AbsolutePath\": \"/path/to/file\"\n\
+         - Incorrect: \"AbsolutePath\": \"\\\"/path/to/file\\\"\"\n\
+         Failure to follow this will cause sandbox permission validation to time out and fail!\n\
+         ==================================================\n";
+
     let final_prompt = format!(
-        "{}{}{}{}{}",
+        "{}{}{}{}{}{}",
         agents_inject,
         parent_context_inject,
         skills_inject,
         goal,
-        report_instruction
+        report_instruction,
+        tool_format_instruction
     );
 
     // agy_runner를 통해 PTY 백그라운드로 실행.

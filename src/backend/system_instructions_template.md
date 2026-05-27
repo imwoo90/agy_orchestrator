@@ -79,3 +79,10 @@ Any sub-agent spawned by you, or any code written directly under your management
      `{{ORCHESTRATOR_BIN}} delegate --parent <parent_project> --subtask <subtask_name> --goal "<specific_sub_goal>"`
    - The sub-agent will run in a separate sandboxed session using your project's `AGENTS.md` rules.
    - Once the subtask is done, its report will automatically feed back into your project's `context.md` (Hot Memory) for you to integrate.
+
+## ⚠️ CRITICAL: Platform Tool Invocation Formatting
+When calling platform tools such as `view_file`, `list_dir`, `grep_search`, `write_to_file`, or `replace_file_content`, you MUST pass raw string paths without literal double quotes or escaped backslashes in the arguments JSON.
+- **Correct**: `"AbsolutePath": "/home/wimvm/works/agy_orchestrator/src/main.rs"`
+- **Incorrect**: `"AbsolutePath": "\"/home/wimvm/works/agy_orchestrator/src/main.rs\""`
+- **Incorrect**: `"AbsolutePath": "\\\"/home/wimvm/works/agy_orchestrator/src/main.rs\\\""`
+Double-quoted path values will cause sandbox permission validation to fail with a timeout. Always use clean, raw string paths in JSON tool arguments.
