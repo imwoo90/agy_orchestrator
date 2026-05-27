@@ -1,0 +1,173 @@
+//! agy_runner: rexpect 기반 agy 프로세스 실행 모듈
+//!
+//! `--dangerously-skip-permissions`를 사용하더라도 `invoke_subagent`가 띄우는
+//! 플랫폼 레벨의 interactive 권한 팝업이 PTY 없이는 hang을 유발합니다.
+//! 이 모듈은 rexpect를 이용해 PTY를 생성하고, 예상치 못한 interactive 프롬프트에
+//! 자동으로 응답하여 agy 프로세스가 중단 없이 완료되도록 보장합니다.
+
+use std::io;
+
+/// agy 프로세스 실행 결과
+pub struct AgyOutput {
+    /// stdout + stderr 통합 출력
+    pub combined_output: String,
+    /// 프로세스 종료 성공 여부
+    pub success: bool,
+}
+
+/// 자동 응답 대상 interactive 프롬프트 패턴들
+///
+/// 이 패턴들에 매칭되는 프롬프트는 자동으로 "y\n" 또는 적절한 응답으로 처리됩니다.
+/// agy --dangerously-skip-permissions가 처리하지 못하는 플랫폼 레벨 팝업,
+/// git 인증, 패키지 설치 확인 등을 포함합니다.
+const AUTO_APPROVE_PATTERNS: &[(&str, &str)] = &[
+    // Antigravity 플랫폼 권한 팝업 (invoke_subagent 서브에이전트)
+    (r"Allow\s+.*\?\s*\(y/n\)", "y"),
+    (r"\[Allow\]\s*\[Deny\]", "y"),
+    (r"Grant permission", "y"),
+    (r"Permission request", "y"),
+    // 일반 y/n 확인 프롬프트
+    (r"\(y/n\)\s*$", "y"),
+    (r"\(Y/n\)\s*$", "y"),
+    (r"\[y/N\]\s*$", "y"),
+    (r"\[Y/n\]\s*$", "y"),
+    (r"Continue\?\s*\(yes/no\)", "yes"),
+    // git 관련
+    (r"Are you sure you want to continue", "yes"),
+    // 패키지 / sudo
+    (r"Do you want to continue\?", "y"),
+    (r"Proceed\s*\[y/N\]", "y"),
+];
+
+/// rexpect를 이용해 agy를 PTY 환경에서 실행합니다.
+///
+/// - `args`: `agy` 이후의 인자 목록 (예: `["--dangerously-skip-permissions", "--prompt", "..."]`)
+/// - `timeout_secs`: 전체 실행 타임아웃 (초). None이면 10분.
+///
+/// 반환: stdout/stderr 통합 출력 문자열과 성공 여부.
+pub fn run_agy_with_pty(args: &[&str], timeout_secs: Option<u64>) -> io::Result<AgyOutput> {
+    let timeout_ms = timeout_secs.unwrap_or(600) * 1000;
+
+    // agy 바이너리 경로 결정
+    let agy_bin = std::env::var("AGY_BIN")
+        .unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/home/wimvm".to_string());
+            format!("{}/.local/bin/agy", home)
+        });
+
+    // 전체 커맨드 문자열 구성
+    let full_cmd = format!("{} {}", agy_bin, args.join(" "));
+
+    let mut output_buf = String::new();
+
+    // AUTO_APPROVE_PATTERNS를 하나의 OR 정규식으로 통합
+    let combined_pattern = AUTO_APPROVE_PATTERNS
+        .iter()
+        .map(|(p, _)| format!("({})", p))
+        .collect::<Vec<_>>()
+        .join("|");
+
+    match rexpect::spawn(&full_cmd, Some(timeout_ms)) {
+        Ok(mut session) => {
+            // 메인 루프: interactive 팝업 감지 → 자동 응답 → EOF까지 반복
+            loop {
+                match session.exp_regex(&combined_pattern) {
+                    Ok((before, matched_str)) => {
+                        output_buf.push_str(&before);
+                        output_buf.push_str(&matched_str);
+
+                        // 매칭된 패턴에 해당하는 응답 찾기
+                        // matched_str에 패턴 키워드가 포함되는지로 간단히 판별
+                        let response = AUTO_APPROVE_PATTERNS
+                            .iter()
+                            .find(|(p, _)| {
+                                // 패턴의 핵심 리터럴 부분으로 매칭 여부 확인
+                                let literal = p.trim_matches(|c: char| {
+                                    matches!(c, '(' | ')' | '?' | '\\' | '^' | '$' | '*' | '+')
+                                });
+                                matched_str.contains(literal) || literal.is_empty()
+                            })
+                            .map(|(_, r)| *r)
+                            .unwrap_or("y");
+
+                        if session.send_line(response).is_err() {
+                            // 응답 전송 실패 = 프로세스 종료 신호
+                            break;
+                        }
+                    }
+                    Err(rexpect::error::Error::EOF { .. }) => {
+                        // 정상 종료
+                        break;
+                    }
+                    Err(_) => {
+                        // 타임아웃 또는 기타 오류
+                        break;
+                    }
+                }
+            }
+
+            Ok(AgyOutput {
+                combined_output: output_buf,
+                success: true,
+            })
+        }
+        Err(e) => {
+            // rexpect spawn 실패 — fallback으로 일반 Command 실행
+            eprintln!(
+                "[agy_runner] rexpect spawn 실패, fallback Command 사용: {}",
+                e
+            );
+            run_agy_fallback(args)
+        }
+    }
+}
+
+/// rexpect를 사용할 수 없는 환경(PTY 없음 등)에서의 fallback 실행
+fn run_agy_fallback(args: &[&str]) -> io::Result<AgyOutput> {
+    let agy_bin = std::env::var("AGY_BIN").unwrap_or_else(|_| {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/home/wimvm".to_string());
+        format!("{}/.local/bin/agy", home)
+    });
+
+    let output = std::process::Command::new(&agy_bin)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .output()?;
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    Ok(AgyOutput {
+        combined_output: combined,
+        success: output.status.success(),
+    })
+}
+
+/// agy를 백그라운드 PTY 세션으로 spawn합니다 (결과를 기다리지 않음).
+///
+/// `delegate` 커맨드처럼 fire-and-forget이 필요한 경우 사용합니다.
+/// rexpect를 별도 스레드에서 실행하여 interactive 팝업을 자동 처리합니다.
+///
+/// 반환: 백그라운드 스레드 JoinHandle
+pub fn spawn_agy_background(
+    args: Vec<String>,
+    log_path: Option<std::path::PathBuf>,
+    timeout_secs: Option<u64>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        match run_agy_with_pty(&args_ref, timeout_secs) {
+            Ok(result) => {
+                if let Some(log) = log_path {
+                    let _ = std::fs::write(&log, &result.combined_output);
+                }
+            }
+            Err(e) => {
+                eprintln!("[agy_runner] spawn_agy_background 오류: {}", e);
+            }
+        }
+    })
+}

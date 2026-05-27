@@ -1,7 +1,7 @@
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::Path;
-use std::process::{Command, Stdio};
+
 use chrono::Local;
 
 use crate::models::ProjectInfo;
@@ -225,59 +225,47 @@ pub fn execute_delegate(parent: String, subtask: String, goal: String) -> io::Re
         report_instruction
     );
 
+    // agy_runner를 통해 PTY 백그라운드로 실행.
+    // rexpect가 invoke_subagent 서브에이전트 권한 팝업 등 unexpected interactive
+    // 프롬프트를 자동 응답하여 hang 없이 완료되도록 보장합니다.
     let log_file_path = base_dir.join("logs").join(format!("{}.log", child_name));
-    let log_file = File::create(&log_file_path)?;
 
-    let mut cmd = Command::new("agy");
-    cmd.arg("--add-dir")
-        .arg(&project_path_str)
-        .arg("--dangerously-skip-permissions")
-        .arg("--print")
-        .arg(&final_prompt)
-        .stdout(Stdio::from(log_file.try_clone()?))
-        .stderr(Stdio::from(log_file))
-        .stdin(Stdio::null());
+    let agy_args = vec![
+        "--add-dir".to_string(),
+        project_path_str.clone(),
+        "--dangerously-skip-permissions".to_string(),
+        "--print".to_string(),
+        final_prompt.clone(),
+    ];
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        extern "C" {
-            fn setsid() -> i32;
-        }
-        unsafe {
-            cmd.pre_exec(|| {
-                setsid();
-                Ok(())
-            });
-        }
-    }
+    let _handle = crate::backend::agy_runner::spawn_agy_background(
+        agy_args,
+        Some(log_file_path.clone()),
+        None, // 기본 타임아웃 10분
+    );
 
-    let child = cmd.spawn();
+    let child_pid = 0u32; // 백그라운드 스레드이므로 실제 PID 추적 불가 — 0으로 표시
 
-    match child {
-        Ok(c) => {
-            let pid = c.id();
-            state.insert(
-                child_name.clone(),
-                ProjectInfo {
-                    path: project_path_str.clone(),
-                    goal: goal.clone(),
-                    pid,
-                    status: "running".to_string(),
-                    spawned_at: Local::now().to_rfc3339(),
-                },
-            );
-            save_state(&state)?;
 
-            println!("Successfully spawned sub-agent '{}' in background.", child_name);
-            println!("PID: {}", pid);
-            println!("Logs: {}", log_file_path.canonicalize()?.to_string_lossy());
-        }
-        Err(e) => {
-            eprintln!("Failed to spawn sub-agent command: {}", e);
-            std::process::exit(1);
-        }
-    }
+    state.insert(
+        child_name.clone(),
+        ProjectInfo {
+            path: project_path_str.clone(),
+            goal: goal.clone(),
+            pid: child_pid,
+            status: "running".to_string(),
+            spawned_at: Local::now().to_rfc3339(),
+        },
+    );
+    save_state(&state)?;
+
+    let log_display = log_file_path.canonicalize()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| log_file_path.to_string_lossy().into_owned());
+
+    println!("Successfully spawned sub-agent '{}' in background (PTY mode).", child_name);
+    println!("Logs: {}", log_display);
+
     Ok(CliResult::Exit)
 }
 

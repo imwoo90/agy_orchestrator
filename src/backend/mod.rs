@@ -1,3 +1,4 @@
+pub mod agy_runner;
 pub mod cli;
 pub mod daemon;
 pub mod health;

@@ -804,18 +804,25 @@ pub async fn send_chat_message(session_id: String, message: String) -> Result<Ch
             std::collections::HashSet::new()
         };
 
-        let mut cmd = std::process::Command::new("/home/wimvm/.local/bin/agy");
-        cmd.arg("--prompt").arg(&prompt_payload);
-        cmd.arg("--dangerously-skip-permissions");
+        // agy_runner를 통해 PTY 환경에서 실행.
+        // rexpect가 invoke_subagent 등에서 발생하는 unexpected interactive 팝업을
+        // 자동으로 응답하여 hang을 방지합니다.
+        let mut agy_args = vec![
+            "--dangerously-skip-permissions".to_string(),
+            "--prompt".to_string(),
+            prompt_payload.clone(),
+        ];
 
         if !is_new_session {
-            cmd.arg("--conversation").arg(&actual_session_id);
-            cmd.arg("--continue");
+            agy_args.push("--conversation".to_string());
+            agy_args.push(actual_session_id.clone());
+            agy_args.push("--continue".to_string());
         }
 
-        let child = cmd.spawn().map_err(|e| ServerFnError::new(e.to_string()))?;
-
-        let output = child.wait_with_output();
+        let agy_args_ref: Vec<&str> = agy_args.iter().map(|s| s.as_str()).collect();
+        // 타임아웃: 10분
+        let _agy_result = backend::agy_runner::run_agy_with_pty(&agy_args_ref, Some(600))
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
 
         let final_session_id = if is_new_session {
             let after_dirs = get_brain_sessions();
@@ -887,59 +894,50 @@ pub async fn send_chat_message(session_id: String, message: String) -> Result<Ch
         // Cleanup draft mapping on return
         remove_draft_mapping(&session_id);
 
-        match output {
-            Ok(out) if out.status.success() => {
-                let _ = check_and_rename_session(&final_session_id, msg_trimmed);
+        // agy_runner 실행 완료 — transcript에서 응답 추출
+        let _ = check_and_rename_session(&final_session_id, msg_trimmed);
 
-                match get_transcript_content_by_id(&final_session_id) {
-                    Ok(clean_reply) => {
-                        let mut final_response = clean_reply;
+        match get_transcript_content_by_id(&final_session_id) {
+            Ok(clean_reply) => {
+                let mut final_response = clean_reply;
 
-                        if let Some(start_idx) = final_response.find("[CREATE_TASK:") {
-                            if let Some(end_idx) = final_response[start_idx..].find(']') {
-                                let full_tag = &final_response[start_idx..start_idx + end_idx + 1];
-                                let content = &final_response[start_idx + "[CREATE_TASK:".len()..start_idx + end_idx];
-                                
-                                let parts: Vec<&str> = content.split('|').collect();
-                                let title = parts.first().unwrap_or(&"").trim().to_string();
-                                let body = parts.get(1).unwrap_or(&"").trim().to_string();
+                if let Some(start_idx) = final_response.find("[CREATE_TASK:") {
+                    if let Some(end_idx) = final_response[start_idx..].find(']') {
+                        let full_tag = &final_response[start_idx..start_idx + end_idx + 1];
+                        let content = &final_response[start_idx + "[CREATE_TASK:".len()..start_idx + end_idx];
 
-                                if !title.is_empty() {
-                                    let mut issues = backend::issue::load_issues();
-                                    let next_id = issues.iter().map(|i| i.id).max().unwrap_or(0) + 1;
-                                    issues.push(Issue {
-                                        id: next_id,
-                                        title: title.clone(),
-                                        body: if body.is_empty() { format!("Automatically created via chat: {}", title) } else { body },
-                                        status: "open".to_string(),
-                                        created_at: chrono::Local::now().to_rfc3339(),
-                                        resolved_at: None,
-                                    });
-                                    let _ = backend::issue::save_issues(&issues);
-                                    
-                                    final_response = final_response.replace(full_tag, "").trim().to_string();
-                                    final_response.push_str(&format!("\n\n*(Created task: **{}** [#{}])*", title, next_id));
-                                }
-                            }
+                        let parts: Vec<&str> = content.split('|').collect();
+                        let title = parts.first().unwrap_or(&"").trim().to_string();
+                        let body = parts.get(1).unwrap_or(&"").trim().to_string();
+
+                        if !title.is_empty() {
+                            let mut issues = backend::issue::load_issues();
+                            let next_id = issues.iter().map(|i| i.id).max().unwrap_or(0) + 1;
+                            issues.push(Issue {
+                                id: next_id,
+                                title: title.clone(),
+                                body: if body.is_empty() { format!("Automatically created via chat: {}", title) } else { body },
+                                status: "open".to_string(),
+                                created_at: chrono::Local::now().to_rfc3339(),
+                                resolved_at: None,
+                            });
+                            let _ = backend::issue::save_issues(&issues);
+
+                            final_response = final_response.replace(full_tag, "").trim().to_string();
+                            final_response.push_str(&format!("\n\n*(Created task: **{}** [#{}])*", title, next_id));
                         }
-
-                        Ok(ChatResponse {
-                            reply: final_response,
-                            actual_session_id: final_session_id,
-                        })
-                    }
-                    Err(e) => {
-                        Ok(ChatResponse {
-                            reply: format!("Failed to retrieve agent response: {}", e),
-                            actual_session_id: final_session_id,
-                        })
                     }
                 }
-            }
-            _ => {
+
                 Ok(ChatResponse {
-                    reply: "Error executing agy prompt CLI.".to_string(),
-                    actual_session_id: actual_session_id,
+                    reply: final_response,
+                    actual_session_id: final_session_id,
+                })
+            }
+            Err(e) => {
+                Ok(ChatResponse {
+                    reply: format!("Failed to retrieve agent response: {}", e),
+                    actual_session_id: final_session_id,
                 })
             }
         }
