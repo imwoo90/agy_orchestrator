@@ -815,10 +815,9 @@ pub async fn send_chat_message(session_id: String, message: String) -> Result<Ch
 
         let child = cmd.spawn().map_err(|e| ServerFnError::new(e.to_string()))?;
 
+        let output = child.wait_with_output();
+
         let final_session_id = if is_new_session {
-            // Sleep briefly to let agy start and create the directory
-            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-            
             let after_dirs = get_brain_sessions();
             let diff: std::collections::HashSet<_> = after_dirs.difference(&before_dirs).cloned().collect();
             let resolved_new_id = if !diff.is_empty() {
@@ -884,8 +883,6 @@ pub async fn send_chat_message(session_id: String, message: String) -> Result<Ch
         } else {
             actual_session_id.clone()
         };
-
-        let output = child.wait_with_output();
 
         // Cleanup draft mapping on return
         remove_draft_mapping(&session_id);
