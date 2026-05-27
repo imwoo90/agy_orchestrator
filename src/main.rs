@@ -85,7 +85,7 @@ mod tests {
             assert_ne!(id_1, id_2);
 
             // 2. Write mock history files directly to isolate them and avoid slow LLM integration calls
-            let brain_dir_1 = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(&id_1);
+            let brain_dir_1 = backend::vault::get_brain_dir().join(&id_1);
             let logs_dir_1 = brain_dir_1.join(".system_generated/logs");
             std::fs::create_dir_all(&logs_dir_1).expect("Failed to create logs dir 1");
             let transcript_path_1 = logs_dir_1.join("transcript_full.jsonl");
@@ -94,7 +94,7 @@ mod tests {
 "#;
             std::fs::write(&transcript_path_1, mock_data_1).expect("Failed to write mock transcript 1");
 
-            let brain_dir_2 = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(&id_2);
+            let brain_dir_2 = backend::vault::get_brain_dir().join(&id_2);
             let logs_dir_2 = brain_dir_2.join(".system_generated/logs");
             std::fs::create_dir_all(&logs_dir_2).expect("Failed to create logs dir 2");
             let transcript_path_2 = logs_dir_2.join("transcript_full.jsonl");

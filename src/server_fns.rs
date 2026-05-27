@@ -309,7 +309,7 @@ pub async fn get_chat_history(session_id: String) -> Result<Vec<ChatMessage>, Se
             return Ok(Vec::new());
         }
 
-        let transcript_path = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain/")
+        let transcript_path = backend::vault::get_brain_dir()
             .join(&resolved_id)
             .join(".system_generated/logs/transcript_full.jsonl");
 
@@ -430,7 +430,7 @@ pub async fn delete_chat_session(id: String) -> Result<(), ServerFnError> {
         sessions.retain(|s| s.id != id);
         save_chat_sessions(&sessions).map_err(|e| ServerFnError::new(e))?;
         
-        let brain_dir = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(&id);
+        let brain_dir = backend::vault::get_brain_dir().join(&id);
         if brain_dir.exists() {
             let _ = std::fs::remove_dir_all(brain_dir);
         }
@@ -717,7 +717,7 @@ pub async fn send_chat_message(session_id: String, message: String) -> Result<Ch
         }
 
         if lower_msg == "clear session" || lower_msg == "reset session" || lower_msg == "reset chat" {
-            let brain_dir = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(&actual_session_id);
+            let brain_dir = backend::vault::get_brain_dir().join(&actual_session_id);
             if brain_dir.exists() {
                 let _ = std::fs::remove_dir_all(brain_dir);
             }
@@ -794,7 +794,7 @@ pub async fn send_chat_message(session_id: String, message: String) -> Result<Ch
             )
         };
 
-        let brain_dir = std::path::Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(&actual_session_id);
+        let brain_dir = backend::vault::get_brain_dir().join(&actual_session_id);
         let transcript_path = brain_dir.join(".system_generated/logs/transcript_full.jsonl");
         let is_new_session = !transcript_path.exists();
 
@@ -844,7 +844,7 @@ pub async fn send_chat_message(session_id: String, message: String) -> Result<Ch
                 // Fallback to ls -td if directory diff is empty
                 if let Ok(path_output) = std::process::Command::new("sh")
                     .arg("-c")
-                    .arg("ls -td /home/wimvm/.gemini/antigravity-cli/brain/*/ | grep -v '/draft-' | head -n 1")
+                    .arg(format!("ls -td {}/*/ | grep -v '/draft-' | head -n 1", backend::vault::get_brain_dir().display()))
                     .output()
                 {
                     if path_output.status.success() {

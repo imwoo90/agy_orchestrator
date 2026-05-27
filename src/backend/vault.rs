@@ -50,6 +50,13 @@ pub fn get_base_dir() -> PathBuf {
     PathBuf::from(home).join(".agy_orchestrator")
 }
 
+/// Returns the dynamic path to the Antigravity CLI brain directory,
+/// resolved from the HOME environment variable rather than a hardcoded path.
+pub fn get_brain_dir() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/wimvm".to_string());
+    PathBuf::from(home).join(".gemini/antigravity-cli/brain")
+}
+
 pub fn bootstrap_if_needed() -> io::Result<()> {
     let base_dir = get_base_dir();
     fs::create_dir_all(&base_dir)?;

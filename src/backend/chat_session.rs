@@ -3,10 +3,9 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
-use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use crate::models::ChatSession;
-use super::vault::get_base_dir;
+use super::vault::{get_base_dir, get_brain_dir};
 
 static DRAFT_MAPPINGS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
 
@@ -59,7 +58,7 @@ pub fn save_chat_sessions(sessions: &[ChatSession]) -> Result<(), String> {
 
 pub fn get_brain_sessions() -> HashSet<String> {
     let mut dirs = HashSet::new();
-    if let Ok(entries) = fs::read_dir("/home/wimvm/.gemini/antigravity-cli/brain") {
+    if let Ok(entries) = fs::read_dir(get_brain_dir()) {
         for entry in entries.flatten() {
             if let Ok(meta) = entry.metadata() {
                 if meta.is_dir() {
@@ -78,7 +77,7 @@ pub fn find_newest_brain_session(diff: &HashSet<String>) -> Option<String> {
     let mut newest_name = None;
     let mut newest_time = std::time::SystemTime::UNIX_EPOCH;
     for name in diff {
-        let path = Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(name);
+        let path = get_brain_dir().join(name);
         if let Ok(meta) = fs::metadata(path) {
             if let Ok(modified) = meta.modified() {
                 if modified > newest_time {
@@ -143,7 +142,7 @@ pub fn promote_session_if_draft(session_id: &str) -> String {
 pub fn append_mock_transcript_line(session_id: &str, msg_type: &str, content: &str) -> Result<(), String> {
     let actual_id = promote_session_if_draft(session_id);
 
-    let brain_dir = Path::new("/home/wimvm/.gemini/antigravity-cli/brain").join(&actual_id);
+    let brain_dir = get_brain_dir().join(&actual_id);
     let logs_dir = brain_dir.join(".system_generated/logs");
     let _ = fs::create_dir_all(&logs_dir);
     let transcript_path = logs_dir.join("transcript_full.jsonl");
@@ -169,7 +168,7 @@ pub fn append_mock_transcript_line(session_id: &str, msg_type: &str, content: &s
 }
 
 pub fn get_transcript_content_by_id(conversation_id: &str) -> Result<String, String> {
-    let transcript_path = Path::new("/home/wimvm/.gemini/antigravity-cli/brain")
+    let transcript_path = get_brain_dir()
         .join(conversation_id)
         .join(".system_generated/logs/transcript_full.jsonl");
     if !transcript_path.exists() {
