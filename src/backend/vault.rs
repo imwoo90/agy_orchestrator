@@ -69,6 +69,18 @@ pub fn bootstrap_if_needed() -> io::Result<()> {
     let skills_dir = base_dir.join("memory/skills");
     fs::create_dir_all(&skills_dir)?;
 
+    // Automatically authorize the global brain directory in settings.json
+    let brain_dir_str = get_brain_dir().to_string_lossy().to_string();
+    if let Err(e) = authorize_workspace(&brain_dir_str) {
+        eprintln!("Warning: Failed to automatically authorize global brain directory: {}", e);
+    }
+
+    // Automatically authorize the orchestrator home directory in settings.json
+    let base_dir_str = get_base_dir().to_string_lossy().to_string();
+    if let Err(e) = authorize_workspace(&base_dir_str) {
+        eprintln!("Warning: Failed to automatically authorize orchestrator home directory: {}", e);
+    }
+
     // 1. Static System Instructions: Always force-overwrite to sync system updates
     let sys_instructions_path = base_dir.join("memory/system_instructions.md");
     let mut file = File::create(sys_instructions_path)?;
