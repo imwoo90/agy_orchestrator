@@ -55,9 +55,6 @@ pub fn run_agy_with_pty(args: &[&str], timeout_secs: Option<u64>) -> io::Result<
             format!("{}/.local/bin/agy", home)
         });
 
-    // 전체 커맨드 문자열 구성
-    let full_cmd = format!("{} {}", agy_bin, args.join(" "));
-
     let mut output_buf = String::new();
 
     // AUTO_APPROVE_PATTERNS를 하나의 OR 정규식으로 통합
@@ -67,7 +64,10 @@ pub fn run_agy_with_pty(args: &[&str], timeout_secs: Option<u64>) -> io::Result<
         .collect::<Vec<_>>()
         .join("|");
 
-    match rexpect::spawn(&full_cmd, Some(timeout_ms)) {
+    let mut cmd = std::process::Command::new(&agy_bin);
+    cmd.args(args);
+
+    match rexpect::session::spawn_command(cmd, Some(timeout_ms)) {
         Ok(mut session) => {
             // 메인 루프: interactive 팝업 감지 → 자동 응답 → EOF까지 반복
             loop {
@@ -95,12 +95,18 @@ pub fn run_agy_with_pty(args: &[&str], timeout_secs: Option<u64>) -> io::Result<
                             break;
                         }
                     }
-                    Err(rexpect::error::Error::EOF { .. }) => {
+                    Err(rexpect::error::Error::EOF { got, .. }) => {
+                        output_buf.push_str(&got);
                         // 정상 종료
                         break;
                     }
+                    Err(rexpect::error::Error::Timeout { got, .. }) => {
+                        output_buf.push_str(&got);
+                        // 타임아웃
+                        break;
+                    }
                     Err(_) => {
-                        // 타임아웃 또는 기타 오류
+                        // 기타 오류
                         break;
                     }
                 }
