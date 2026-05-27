@@ -198,6 +198,68 @@ pub fn authorize_workspace(path: &str) -> std::io::Result<()> {
     let file = std::fs::File::create(&settings_path)?;
     serde_json::to_writer_pretty(file, &json)?;
 
+    // 2. Also register the workspace in ~/.gemini/config/projects/ to satisfy Gemini platform sandbox
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/wimvm".to_string());
+    let projects_dir = std::path::PathBuf::from(home).join(".gemini/config/projects");
+    let _ = std::fs::create_dir_all(&projects_dir);
+
+    let mut already_exists = false;
+    if let Ok(entries) = std::fs::read_dir(&projects_dir) {
+        for entry in entries.flatten() {
+            let path_buf = entry.path();
+            if path_buf.extension().is_some_and(|ext| ext == "json") {
+                if let Ok(content) = std::fs::read_to_string(&path_buf) {
+                    if let Ok(proj_json) = serde_json::from_str::<serde_json::Value>(&content) {
+                        let is_match = proj_json.get("projectResources")
+                            .and_then(|pr| pr.get("resources"))
+                            .and_then(|r| r.as_array())
+                            .is_some_and(|arr| {
+                                arr.iter().any(|item| {
+                                    item.get("gitFolder")
+                                        .and_then(|gf| gf.get("folderUri"))
+                                        .and_then(|fu| fu.as_str())
+                                        .is_some_and(|s| s == format!("file://{}", path) || s == format!("file:///{}", path.trim_start_matches('/')))
+                                })
+                            });
+                        if is_match {
+                            already_exists = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if !already_exists {
+        let uuid = if let Ok(u) = std::fs::read_to_string("/proc/sys/kernel/random/uuid") {
+            u.trim().to_string()
+        } else {
+            let ts = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+            format!("proj-{}", ts)
+        };
+
+        let new_proj_path = projects_dir.join(format!("{}.json", uuid));
+        let new_proj_json = serde_json::json!({
+            "id": uuid,
+            "name": path,
+            "projectResources": {
+                "resources": [
+                    {
+                        "gitFolder": {
+                            "folderUri": format!("file://{}", path),
+                            "allowWrite": true
+                        }
+                    }
+                ]
+            }
+        });
+
+        if let Ok(f) = std::fs::File::create(new_proj_path) {
+            let _ = serde_json::to_writer_pretty(f, &new_proj_json);
+        }
+    }
+
     Ok(())
 }
 
