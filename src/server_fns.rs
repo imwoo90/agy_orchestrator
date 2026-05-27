@@ -787,10 +787,20 @@ pub async fn send_chat_message(session_id: String, message: String) -> Result<Ch
                 )
             };
 
+            let tool_format_instruction = "\n\n==================================================\n\
+CRITICAL TOOL CALL FORMATTING RULES:\n\
+When calling platform tools (e.g., view_file, list_dir, grep_search, write_to_file, replace_file_content):\n\
+- Do NOT wrap string arguments (like paths or queries) in nested or escaped double quotes.\n\
+- Correct: \"AbsolutePath\": \"/path/to/file\"\n\
+- Incorrect: \"AbsolutePath\": \"\\\"/path/to/file\\\"\"\n\
+Failure to follow this will cause sandbox permission validation to time out and fail!\n\
+==================================================\n";
+
             format!(
-                "[System Instruction: {}]\n\nUser Message: {}",
+                "[System Instruction: {}]\n\nUser Message: {}{}",
                 system_instruction,
-                msg_trimmed
+                msg_trimmed,
+                tool_format_instruction
             )
         };
 
