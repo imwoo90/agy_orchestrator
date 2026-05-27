@@ -456,3 +456,21 @@ The user requested a cleaner, more minimal chat assistant UI by removing unneces
 ## 4. CRITICAL ITEMS FOR REVIEW
 None
 
+
+
+# 📅 History log from 2026-05-27 21:43:38 (Spawned at 2026-05-25T23:15:48+09:00)
+
+# Evolution Report: Fix Shell Argument Splitting & Output Loss in PTY Spawner
+
+## Date: 2026-05-27
+## Issue Resolved: #63
+
+### Summary of Bug
+1. **Shell Splitting**: `rexpect::spawn` with a joined command string caused user messages with spaces to be split into separate arguments, leading to CLI validation failure ("unknown argument") and premature exits. This left the brain session folder (e.g. `0473ea64-09ff-4902-8f9c-84bc16fa8e16`) completely empty.
+2. **Buffer Loss**: Normal termination without matching prompts ended the regex loop with an `EOF`/`Timeout` error, losing any accumulated output.
+
+### Fix Details
+1. Replaced `rexpect::spawn` with `rexpect::session::spawn_command` using a structured `Command` builder to enforce strict argument boundaries.
+2. Destructured the `got` buffer fields inside `rexpect::error::Error::EOF` and `rexpect::error::Error::Timeout` to append trailing output buffer prior to process exits.
+3. Successfully compiled, ran unit tests, passed the evolution harness, and hot-reloaded the active daemon and dashboard.
+

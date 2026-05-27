@@ -37,8 +37,9 @@ fn main() -> std::io::Result<()> {
             Err(e) => {
                 let has_args = std::env::args().len() > 1;
                 let is_dioxus_env = std::env::var("PORT").is_ok() || std::env::var("ADDR").is_ok() || std::env::var("IP").is_ok() || std::env::var("DIOXUS_ACTIVE").is_ok();
+                let is_help_or_version = matches!(e.kind(), clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion);
 
-                if !has_args || is_dioxus_env {
+                if (is_dioxus_env || !has_args) && !is_help_or_version {
                     // Under dx serve or when direct execution with no args is called, boot up Dioxus.
                     dioxus::launch(frontend::App);
                     Ok(())

@@ -12,6 +12,7 @@ JIT Memory Agent Orchestrator & Knowledge Vault for AI coding assistants.
 - **OTA Self-Upgrade**: Downloads/recompiles binary, updates public assets, restarts daemon, and automatically restarts dashboard web process on its active port using detached `setsid()`.
 - **Auto-Incrementing Dev Version**: Tracks local dev compiles at `~/.agy_orchestrator/dev_build_number` and appends dev version suffix.
 - **Evolution Harness**: Validates edits against static integrity gates, clippy warnings (`-D warnings`), and test suites before committing/resolving issues.
+  - **PTY Agy Runner (rexpect)**: Spawns the underlying `agy` command within a pseudo-terminal (PTY) to intercept and automatically answer unexpected interactive permission prompts from subagents (`invoke_subagent`), utilizing robust argument array spawning (`spawn_command`) and error buffer recovery (`got` payload in EOF/Timeout errors) to prevent hangs and output loss.
   - Premium Chat Assistant: Glassmorphic, highly polished UI tab integrated with agy CLI using session tracking. Supports:
     - Custom pure-Rust Markdown & code block parser/renderer with interactive copy.
     - Multi-Room Chat Session Management: Switch, create, and delete individual rooms with first-message auto-naming.
