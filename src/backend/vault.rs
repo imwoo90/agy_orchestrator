@@ -81,6 +81,33 @@ pub fn bootstrap_if_needed() -> io::Result<()> {
         eprintln!("Warning: Failed to automatically authorize orchestrator home directory: {}", e);
     }
 
+    // Automatically authorize the current active workspace/brain session directory in settings.json
+    if let Ok(current_dir) = std::env::current_dir() {
+        let brain_dir = get_brain_dir();
+        if current_dir.starts_with(&brain_dir) && current_dir != brain_dir {
+            let current_dir_str = current_dir.to_string_lossy().to_string();
+            if let Err(e) = authorize_workspace(&current_dir_str) {
+                eprintln!("Warning: Failed to automatically authorize current active workspace/brain session directory: {}", e);
+            }
+
+            // Also automatically extract and authorize the parent brain session root directory (e.g. brain/<session_id>)
+            let brain_components_len = brain_dir.components().count();
+            let current_components: Vec<_> = current_dir.components().collect();
+            if current_components.len() > brain_components_len {
+                let mut session_dir = PathBuf::new();
+                for comp in current_components.iter().take(brain_components_len + 1) {
+                    session_dir.push(comp);
+                }
+                let session_dir_str = session_dir.to_string_lossy().to_string();
+                if session_dir_str != current_dir_str {
+                    if let Err(e) = authorize_workspace(&session_dir_str) {
+                        eprintln!("Warning: Failed to automatically authorize brain session root directory: {}", e);
+                    }
+                }
+            }
+        }
+    }
+
     // 1. Static System Instructions: Always force-overwrite to sync system updates
     let sys_instructions_path = base_dir.join("memory/system_instructions.md");
     let mut file = File::create(sys_instructions_path)?;
