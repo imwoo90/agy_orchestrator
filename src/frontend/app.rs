@@ -11,9 +11,13 @@ async fn sleep_ms(ms: u32) {
     {
         gloo_timers::future::TimeoutFuture::new(ms).await;
     }
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), feature = "server"))]
     {
         tokio::time::sleep(std::time::Duration::from_millis(ms as u64)).await;
+    }
+    #[cfg(all(not(target_arch = "wasm32"), not(feature = "server")))]
+    {
+        std::thread::sleep(std::time::Duration::from_millis(ms as u64));
     }
 }
 
@@ -89,8 +93,20 @@ pub fn App() -> Element {
             rel: "stylesheet",
             href: {
                 let path = asset!("assets/tailwind.css").to_string();
-                if path.starts_with("/assets/") || path.starts_with("./assets/") {
-                    path
+                let mut clean_path = path.as_str();
+                loop {
+                    if let Some(stripped) = clean_path.strip_prefix('.') {
+                        clean_path = stripped;
+                    } else if let Some(stripped) = clean_path.strip_prefix('/') {
+                        clean_path = stripped;
+                    } else {
+                        break;
+                    }
+                }
+                if clean_path.starts_with("assets/") {
+                    format!("/{}", clean_path)
+                } else if clean_path.starts_with("tailwind") {
+                    format!("/assets/{}", clean_path)
                 } else {
                     "/assets/tailwind.css".to_string()
                 }

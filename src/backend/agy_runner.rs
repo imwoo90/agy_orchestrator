@@ -5,7 +5,9 @@
 //! 이 모듈은 rexpect를 이용해 PTY를 생성하고, 예상치 못한 interactive 프롬프트에
 //! 자동으로 응답하여 agy 프로세스가 중단 없이 완료되도록 보장합니다.
 
-use std::io::{self, Write};
+use std::io;
+#[cfg(feature = "server")]
+use std::io::Write;
 
 /// agy 프로세스 실행 결과
 pub struct AgyOutput {
@@ -20,6 +22,7 @@ pub struct AgyOutput {
 /// 이 패턴들에 매칭되는 프롬프트는 자동으로 "y\n" 또는 적절한 응답으로 처리됩니다.
 /// agy --dangerously-skip-permissions가 처리하지 못하는 플랫폼 레벨 팝업,
 /// git 인증, 패키지 설치 확인 등을 포함합니다.
+#[cfg(feature = "server")]
 const AUTO_APPROVE_PATTERNS: &[(&str, &str)] = &[
     // Antigravity 플랫폼 권한 팝업 (invoke_subagent 서브에이전트)
     (r"Allow\s+.*\?\s*\(y/n\)", "y"),
@@ -46,6 +49,7 @@ const AUTO_APPROVE_PATTERNS: &[(&str, &str)] = &[
 /// - `log_path`: 백그라운드 실시간 출력을 기록할 로그 파일 경로.
 ///
 /// 반환: stdout/stderr 통합 출력 문자열과 성공 여부.
+#[cfg(feature = "server")]
 pub fn run_agy_with_pty(
     args: &[&str],
     timeout_secs: Option<u64>,
@@ -205,6 +209,16 @@ pub fn run_agy_with_pty(
     }
 }
 
+/// rexpect가 없을 때의 run_agy_with_pty fallback 스텁
+#[cfg(not(feature = "server"))]
+pub fn run_agy_with_pty(
+    args: &[&str],
+    _timeout_secs: Option<u64>,
+    log_path: Option<&std::path::Path>,
+) -> io::Result<AgyOutput> {
+    run_agy_fallback(args, log_path)
+}
+
 /// rexpect를 사용할 수 없는 환경(PTY 없음 등)에서의 fallback 실행
 fn run_agy_fallback(args: &[&str], log_path: Option<&std::path::Path>) -> io::Result<AgyOutput> {
     let agy_bin = std::env::var("AGY_BIN").unwrap_or_else(|_| {
@@ -239,6 +253,7 @@ fn run_agy_fallback(args: &[&str], log_path: Option<&std::path::Path>) -> io::Re
 /// rexpect를 별도 스레드에서 실행하여 interactive 팝업을 자동 처리합니다.
 ///
 /// 반환: 백그라운드 스레드 JoinHandle
+#[cfg(feature = "server")]
 pub fn spawn_agy_background(
     args: Vec<String>,
     log_path: Option<std::path::PathBuf>,
@@ -376,4 +391,14 @@ pub fn spawn_agy_background(
     });
 
     rx.recv().unwrap_or_else(|_| Err(io::Error::other("Thread hung during spawn")))
+}
+
+/// rexpect가 없을 때의 spawn_agy_background fallback 스텁
+#[cfg(not(feature = "server"))]
+pub fn spawn_agy_background(
+    _args: Vec<String>,
+    _log_path: Option<std::path::PathBuf>,
+    _timeout_secs: Option<u64>,
+) -> io::Result<u32> {
+    Err(io::Error::new(io::ErrorKind::Unsupported, "PTY spawning requires 'server' feature"))
 }

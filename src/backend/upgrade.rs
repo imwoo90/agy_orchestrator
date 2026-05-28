@@ -253,6 +253,15 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
     }
     println!("Compilation completed successfully!");
 
+    // Copy tailwind.css to new_public/assets/tailwind.css to ensure it is packaged
+    let src_tailwind = workspace_root.join("assets/tailwind.css");
+    if src_tailwind.exists() && new_public.exists() {
+        let dest_assets = new_public.join("assets");
+        let _ = fs::create_dir_all(&dest_assets);
+        let dest_tailwind = dest_assets.join("tailwind.css");
+        let _ = fs::copy(&src_tailwind, &dest_tailwind);
+    }
+
     if current_exe != new_exe {
         println!("Installing upgraded binary and assets...");
         let old_exe = current_exe.with_extension("old");

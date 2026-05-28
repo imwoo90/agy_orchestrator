@@ -3,6 +3,22 @@ use dioxus::document::eval;
 use std::collections::HashMap;
 use crate::models::{Issue, ChatMessage, ChatSession};
 
+async fn sleep_ms(ms: u32) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        gloo_timers::future::TimeoutFuture::new(ms).await;
+    }
+    #[cfg(all(not(target_arch = "wasm32"), feature = "server"))]
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(ms as u64)).await;
+    }
+    #[cfg(all(not(target_arch = "wasm32"), not(feature = "server")))]
+    {
+        std::thread::sleep(std::time::Duration::from_millis(ms as u64));
+    }
+}
+
+
 
 #[derive(Debug, Clone, PartialEq)]
 enum InlineSpan {
@@ -238,14 +254,7 @@ fn render_markdown(text: &str) -> Element {
                                             spawn(async move {
                                                 let _ = eval(&format!("navigator.clipboard.writeText({});", serde_json::to_string(&code).unwrap()));
                                                 copy_txt.set("Copied!".to_string());
-                                                #[cfg(target_arch = "wasm32")]
-                                                {
-                                                    gloo_timers::future::TimeoutFuture::new(1500).await;
-                                                }
-                                                #[cfg(not(target_arch = "wasm32"))]
-                                                {
-                                                    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-                                                }
+                                                sleep_ms(1500).await;
                                                 copy_txt.set("Copy".to_string());
                                             });
                                         },
@@ -395,14 +404,7 @@ pub fn ChatTab(
         let sent_text = text.clone();
         
         spawn(async move {
-            #[cfg(target_arch = "wasm32")]
-            {
-                gloo_timers::future::TimeoutFuture::new(1000).await;
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            }
+            sleep_ms(1000).await;
 
             while loading_poll.read().get(&active_id_poll).copied().unwrap_or(false) {
                 if let Ok(mut history) = crate::get_chat_history(active_id_poll.clone()).await {
@@ -419,14 +421,7 @@ pub fn ChatTab(
                     }
                 }
                 
-                #[cfg(target_arch = "wasm32")]
-                {
-                    gloo_timers::future::TimeoutFuture::new(1500).await;
-                }
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-                }
+                sleep_ms(1500).await;
             }
         });
 

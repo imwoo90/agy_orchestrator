@@ -9,6 +9,7 @@ dependencies = [
  "chrono",
  "clap",
  "dioxus",
+ "getrandom 0.3.4",
  "gloo-timers",
  "rexpect",
  "serde",

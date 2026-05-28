@@ -53,20 +53,52 @@ fn main() -> std::io::Result<()> {
                 if let Ok(workspace_root) = backend::health::find_workspace_root() {
                     let debug_public = workspace_root.join("target/dx/agy-orchestrator/debug/web/public");
                     let release_public = workspace_root.join("target/dx/agy-orchestrator/release/web/public");
-                    if debug_public.exists() {
-                        std::env::set_var("DIOXUS_PUBLIC_PATH", &debug_public);
-                    } else if release_public.exists() {
-                        std::env::set_var("DIOXUS_PUBLIC_PATH", &release_public);
+                    if cfg!(debug_assertions) {
+                        if debug_public.exists() {
+                            std::env::set_var("DIOXUS_PUBLIC_PATH", &debug_public);
+                        } else if release_public.exists() {
+                            std::env::set_var("DIOXUS_PUBLIC_PATH", &release_public);
+                        }
+                    } else {
+                        if release_public.exists() {
+                            std::env::set_var("DIOXUS_PUBLIC_PATH", &release_public);
+                        } else if debug_public.exists() {
+                            std::env::set_var("DIOXUS_PUBLIC_PATH", &debug_public);
+                        }
                     }
                 }
             }
 
-            // Always copy tailwind.css to the target public assets directory if it exists
-            if let Ok(workspace_root) = backend::health::find_workspace_root() {
+        }
+
+        // Always copy tailwind.css to target public assets directories if workspace root is available
+        if let Ok(workspace_root) = backend::health::find_workspace_root() {
+            let src_tailwind = workspace_root.join("assets/tailwind.css");
+            if src_tailwind.exists() {
+                // 1. Copy to exe_public if it exists
+                if let Some(ref pub_path) = exe_public {
+                    if pub_path.exists() {
+                        let dest_assets = pub_path.join("assets");
+                        let _ = std::fs::create_dir_all(&dest_assets);
+                        let dest_tailwind = dest_assets.join("tailwind.css");
+                        let _ = std::fs::copy(&src_tailwind, &dest_tailwind);
+                    }
+                }
+                // 2. Copy to DIOXUS_PUBLIC_PATH if set and exists
                 if let Ok(pub_path_str) = std::env::var("DIOXUS_PUBLIC_PATH") {
                     let pub_path = std::path::PathBuf::from(pub_path_str);
-                    let src_tailwind = workspace_root.join("assets/tailwind.css");
-                    if src_tailwind.exists() && pub_path.exists() {
+                    if pub_path.exists() {
+                        let dest_assets = pub_path.join("assets");
+                        let _ = std::fs::create_dir_all(&dest_assets);
+                        let dest_tailwind = dest_assets.join("tailwind.css");
+                        let _ = std::fs::copy(&src_tailwind, &dest_tailwind);
+                    }
+                }
+                // 3. Also copy to target/dx debug/release directories directly
+                let debug_public = workspace_root.join("target/dx/agy-orchestrator/debug/web/public");
+                let release_public = workspace_root.join("target/dx/agy-orchestrator/release/web/public");
+                for pub_path in &[debug_public, release_public] {
+                    if pub_path.exists() {
                         let dest_assets = pub_path.join("assets");
                         let _ = std::fs::create_dir_all(&dest_assets);
                         let dest_tailwind = dest_assets.join("tailwind.css");
@@ -134,9 +166,9 @@ mod tests {
         assert!(content.contains("// Evolution verified!"));
     }
 
+    #[cfg(feature = "server")]
     #[tokio::test]
     async fn test_multi_session_chat() {
-        #[cfg(feature = "server")]
         {
             // 1. Create two separate sessions
             let id_1 = create_chat_session().await.expect("Failed to create session 1");
