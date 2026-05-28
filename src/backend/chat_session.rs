@@ -107,6 +107,25 @@ pub fn find_oldest_brain_session(diff: &HashSet<String>) -> Option<String> {
     oldest_name
 }
 
+pub fn find_parent_brain_session(diff: &HashSet<String>, prompt: &str) -> Option<String> {
+    for name in diff {
+        let path = get_brain_dir().join(name).join(".system_generated/logs/transcript_full.jsonl");
+        if path.exists() {
+            if let Ok(content) = fs::read_to_string(path) {
+                if content.contains(prompt) {
+                    return Some(name.clone());
+                }
+                // Fallback substring matching for long prompts
+                let sub = &prompt[..std::cmp::min(50, prompt.len())];
+                if content.contains(sub) {
+                    return Some(name.clone());
+                }
+            }
+        }
+    }
+    find_newest_brain_session(diff)
+}
+
 pub fn uuid_v4_fallback() -> String {
     if let Ok(uuid) = fs::read_to_string("/proc/sys/kernel/random/uuid") {
         uuid.trim().to_string()

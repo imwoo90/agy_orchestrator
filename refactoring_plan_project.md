@@ -1,35 +1,26 @@
-use std::fs::{self, File};
-use std::io::{self, Write, Read};
-use std::path::{Path, PathBuf};
-use chrono::Local;
+# Refactoring Plan: Project Command Modernization
 
-use crate::backend::vault::get_base_dir;
-use crate::backend::state::{load_state, save_state, check_project_status};
-use crate::backend::health::run_health_checks;
-use crate::backend::cli::CliResult;
-use crate::models::{ProjectInfo, HealthCheckResult};
+This document outlines the detailed refactoring plan for `src/backend/commands/project.rs` to extract presentation/formatting helpers, replace `std::process::exit(1)` code smells with standard Rust error propagation (`std::io::Result`), and plan for comprehensive unit tests.
 
-pub struct ProjectStatusDetails {
-    pub name: String,
-    pub path: String,
-    pub status: String,
-    pub pid: u32,
-    pub spawned_at: String,
-    pub goal: String,
-    pub report_content: Option<String>,
-    pub log_suggestion: Option<PathBuf>,
-}
+---
 
-pub struct ProjectContextDetails {
-    pub name: String,
-    pub path: String,
-    pub status: String,
-    pub playbook: Option<String>,
-    pub hot_memory: Option<String>,
-    pub cold_memory_size: Option<u64>,
-    pub cold_memory_exists: bool,
-}
+## 1. Objectives & Architectural Decisions
 
+* **Extract Presentation & Formatting Helpers**: Decouple command orchestration logic from raw terminal rendering/printing. This ensures that formatting and layout changes do not affect core project management logic.
+* **Injectable Generic Writers**: Modernize all printing helpers to accept a generic writer parameter `w: &mut W` (where `W: std::io::Write`), rendering the presentation layer fully unit-testable via memory buffers (e.g., `Vec<u8>`).
+* **Replace `std::process::exit(1)`**: Eliminate direct process exits to allow upstream callers (like CLI entrypoint, future dashboard APIs, or parent orchestrator routines) to handle errors cleanly. Failures will propagate as structured `std::io::Error` instances.
+* **Enable Pure Logical Testing**: Extract file-parsing logic and project data construction into pure functional cores, facilitating unit testing without direct disk dependency.
+* **Mock State in Tests**: Establish isolated test-homes in target directories for filesystem side-effect testing, preventing pollution of real developer databases.
+
+---
+
+## 2. Refactoring Outline & Helper Signatures
+
+### 2.1. Formatting & Presentation Helpers
+
+We will extract output formatting and terminal-printing layouts into dedicated presentation helpers:
+
+```rust
 /// Formats the RFC3339 timestamp of project spawning for CLI tabular display.
 ///
 /// Converts "YYYY-MM-DDT..." to "YYYY-MM-DD HH:MM:SS" (or similar prefix).
@@ -144,12 +135,38 @@ pub fn render_health_checks<W: std::io::Write>(
     writeln!(w, "\nSummary: {} passed, {} failed.", healthy_count, failed_count)?;
     Ok(())
 }
+```
+
+### 2.2. Pure Logical Core Helpers
+
+We will extract the logic routines so that execution flows do not read files inline or print directly:
+
+```rust
+pub struct ProjectStatusDetails {
+    pub name: String,
+    pub path: String,
+    pub status: String,
+    pub pid: u32,
+    pub spawned_at: String,
+    pub goal: String,
+    pub report_content: Option<String>,
+    pub log_suggestion: Option<std::path::PathBuf>,
+}
+
+pub struct ProjectContextDetails {
+    pub name: String,
+    pub path: String,
+    pub status: String,
+    pub playbook: Option<String>,
+    pub hot_memory: Option<String>,
+    pub cold_memory_size: Option<u64>,
+    pub cold_memory_exists: bool,
+}
 
 /// Parses the "Lessons Learned" section out of report.md.
 ///
 /// Looks for headings matching "Lessons Learned", "교훈", or "지식".
 pub fn parse_lessons_learned(content: &str) -> String {
-    // Parse Lessons Learned / 교훈 / 지식 Section
     let mut lessons_content = String::new();
     let mut in_lessons = false;
     
@@ -179,7 +196,6 @@ pub fn handle_parent_feedback_loop(
     report_content: &str,
     state: &std::collections::HashMap<String, ProjectInfo>,
 ) -> io::Result<Option<String>> {
-    // Sub-agent report feedback loop (Child -> Parent context feedback)
     if !name.contains("_sub_") {
         return Ok(None);
     }
@@ -210,14 +226,26 @@ pub fn handle_parent_feedback_loop(
     }
     Ok(None)
 }
+```
 
+---
+
+## 3. Modernized Execute Functions
+
+By utilizing the extracted formatting and logic helpers, we replace `std::process::exit(1)` with `io::Result`:
+
+### 3.1. `execute_list()`
+```rust
 pub fn execute_list() -> io::Result<CliResult> {
     let mut state = load_state();
     render_projects_table(&mut io::stdout(), &mut state)?;
     save_state(&state)?;
     Ok(CliResult::Exit)
 }
+```
 
+### 3.2. `execute_status(name: String)`
+```rust
 pub fn execute_status(name: String) -> io::Result<CliResult> {
     let mut state = load_state();
     let base_dir = get_base_dir();
@@ -254,7 +282,10 @@ pub fn execute_status(name: String) -> io::Result<CliResult> {
     render_project_status(&mut io::stdout(), &details)?;
     Ok(CliResult::Exit)
 }
+```
 
+### 3.3. `execute_get_context(name: String)`
+```rust
 pub fn execute_get_context(name: String) -> io::Result<CliResult> {
     let mut state = load_state();
     
@@ -305,30 +336,31 @@ pub fn execute_get_context(name: String) -> io::Result<CliResult> {
     render_project_context(&mut io::stdout(), &details)?;
     Ok(CliResult::Exit)
 }
+```
 
+### 3.4. `execute_consolidate(name: String)`
+```rust
 pub fn execute_consolidate(name: String) -> io::Result<CliResult> {
     let mut state = load_state();
     let base_dir = get_base_dir();
     
-    let (path_str, spawned_at) = {
-        let info = state.get_mut(&name).ok_or_else(|| {
-            eprintln!("Error: Project '{}' not found.", name);
-            io::Error::new(io::ErrorKind::NotFound, format!("Project '{}' not found.", name))
-        })?;
+    let info = state.get_mut(&name).ok_or_else(|| {
+        eprintln!("Error: Project '{}' not found.", name);
+        io::Error::new(io::ErrorKind::NotFound, format!("Project '{}' not found.", name))
+    })?;
 
-        let status = check_project_status(&name, info);
-        if status == "running" {
-            eprintln!("Error: Cannot consolidate project '{}' while it is still running.", name);
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                format!("Cannot consolidate project '{}' while it is still running.", name)
-            ));
-        }
+    let status = check_project_status(&name, info);
+    if status == "running" {
+        eprintln!("Error: Cannot consolidate project '{}' while it is still running.", name);
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("Cannot consolidate project '{}' while it is still running.", name)
+        ));
+    }
 
-        info.status = "completed".to_string();
-
-        (info.path.clone(), info.spawned_at.clone())
-    };
+    info.status = "completed".to_string();
+    let path_str = info.path.clone();
+    let spawned_at = info.spawned_at.clone();
 
     let report_path = Path::new(&path_str).join("report.md");
     if !report_path.exists() {
@@ -357,7 +389,6 @@ pub fn execute_consolidate(name: String) -> io::Result<CliResult> {
         )?;
         println!("Extracted lessons learned and saved to {}", lessons_file_path.display());
 
-        // Log notification
         if let Ok(mut log_file) = fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -385,7 +416,6 @@ pub fn execute_consolidate(name: String) -> io::Result<CliResult> {
         timestamp, spawned_at, report_content
     )?;
 
-    // Fallback: If context.md (Hot Memory) does not exist, initialize it with report contents
     let context_path = Path::new(&path_str).join("context.md");
     if !context_path.exists() {
         let mut context_file = File::create(&context_path)?;
@@ -401,169 +431,57 @@ pub fn execute_consolidate(name: String) -> io::Result<CliResult> {
         println!("Hot Memory: Initialized context.md from report fallback.");
     }
 
-    // Clean up report.md as it is consolidated into context_history.md
     if let Err(e) = fs::remove_file(&report_path) {
         eprintln!("Warning: Failed to remove report.md at {}: {}", report_path.display(), e);
     } else {
         println!("Cleaned up report.md after consolidation.");
     }
 
-    if let Some(parent_name) = handle_parent_feedback_loop(&name, &report_content, &state)? {
-        println!("Feedback Loop: Auto-injected subtask completed report into parent '{}' context.md", parent_name);
-    }
-
+    handle_parent_feedback_loop(&name, &report_content, &state)?;
     save_state(&state)?;
 
     println!("Successfully consolidated report.md into context_history.md for project '{}'.", name);
     println!("Updated status to 'completed' in projects.json.");
     Ok(CliResult::Exit)
 }
+```
 
+### 3.5. `execute_health_check()`
+```rust
 pub fn execute_health_check() -> io::Result<CliResult> {
     println!("Running health checks on all registered targets...\n");
     let results = run_health_checks().map_err(|e| {
         eprintln!("Health check error: {}", e);
-        io::Error::other(format!("Health check error: {}", e))
+        io::Error::new(io::ErrorKind::Other, format!("Health check error: {}", e))
     })?;
     
     render_health_checks(&mut io::stdout(), &results)?;
     Ok(CliResult::Exit)
 }
+```
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::HashMap;
-    use std::env;
+---
 
-    #[test]
-    fn test_format_spawned_at() {
-        assert_eq!(format_spawned_at("2026-05-28T22:13:58Z"), "2026-05-28 22:13:58");
-        assert_eq!(format_spawned_at("short"), "short");
-    }
+## 4. Unit Testing Strategy
 
-    #[test]
-    fn test_parse_lessons_learned() {
-        let content = "\
-# My Report
-This is a report.
+We will introduce a unit test suite under `#[cfg(test)]` in `src/backend/commands/project.rs`:
 
-## Lessons Learned
-- Don't do that.
-- Do this instead.
+1. **`test_format_spawned_at`**:
+   - Asserts timestamp slicing and T-separator replacement behavior for RFC3339 formatted timestamps.
+   - Asserts handling of malformed input (gracefully falling back to original string).
 
-# Next Steps
-More info.
-";
-        let parsed = parse_lessons_learned(content);
-        assert!(parsed.contains("- Don't do that."));
-        assert!(parsed.contains("- Do this instead."));
-        assert!(!parsed.contains("More info."));
+2. **`test_parse_lessons_learned`**:
+   - Asserts header extraction for various headings: `# Lessons Learned`, `## 교훈`, `### 지식`.
+   - Asserts that text under other headers is ignored.
+   - Asserts correct formatting of multi-line content inside lessons learned sections.
 
-        let content_kr = "\
-# 보고서
-## 교훈
-- 이렇게 하시오.
-### 지식
-- 저렇게 하시오.
-";
-        let parsed_kr = parse_lessons_learned(content_kr);
-        assert!(parsed_kr.contains("- 이렇게 하시오."));
-    }
+3. **`test_handle_parent_feedback_loop`**:
+   - Verifies logic mapping between sub-agent names (e.g. `parent_sub_task`) and parent directories.
+   - Sets up a temporary workspace and checks if reports are properly appended to parent's `context.md` file.
 
-    #[test]
-    fn test_handle_parent_feedback_loop() {
-        let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        let parent_path = std::path::PathBuf::from(manifest_dir)
-            .join("target")
-            .join("test_home_project")
-            .join("parent_proj");
-        let _ = fs::remove_dir_all(&parent_path);
-        fs::create_dir_all(&parent_path).unwrap();
+4. **`test_render_helpers`**:
+   - Tests `render_projects_table`, `render_project_status`, `render_project_context`, and `render_health_checks` by passing a dummy `Vec<u8>` writer, verifying the output contains correct formatting, tabular columns, headings, and data fields.
 
-        let mut state = HashMap::new();
-        state.insert(
-            "parent_proj".to_string(),
-            ProjectInfo {
-                path: parent_path.to_str().unwrap().to_string(),
-                pid: 1234,
-                spawned_at: "2026-05-28T12:00:00Z".to_string(),
-                status: "running".to_string(),
-                goal: "solve issue".to_string(),
-            },
-        );
-
-        let report = "Task is completed successfully!";
-        let parent = handle_parent_feedback_loop("parent_proj_sub_task", report, &state).unwrap();
-        assert_eq!(parent, Some("parent_proj".to_string()));
-
-        let parent_context = parent_path.join("context.md");
-        assert!(parent_context.exists());
-        let content = fs::read_to_string(parent_context).unwrap();
-        assert!(content.contains("Subtask Completed: 'task'"));
-        assert!(content.contains("Task is completed successfully!"));
-
-        let _ = fs::remove_dir_all(&parent_path);
-    }
-
-    #[test]
-    fn test_render_projects_table() {
-        let mut state = HashMap::new();
-        state.insert(
-            "test_proj".to_string(),
-            ProjectInfo {
-                path: "/path/to/test".to_string(),
-                pid: 5678,
-                spawned_at: "2026-05-28T12:00:00Z".to_string(),
-                status: "running".to_string(),
-                goal: "make test".to_string(),
-            },
-        );
-
-        let mut buf = Vec::new();
-        render_projects_table(&mut buf, &mut state).unwrap();
-        let output = String::from_utf8(buf).unwrap();
-        assert!(output.contains("test_proj"));
-        assert!(output.contains("5678"));
-    }
-
-    #[test]
-    fn test_render_project_status() {
-        let details = ProjectStatusDetails {
-            name: "status_proj".to_string(),
-            path: "/path/to/status".to_string(),
-            status: "failed".to_string(),
-            pid: 999,
-            spawned_at: "2026-05-28 12:00:00".to_string(),
-            goal: "status check".to_string(),
-            report_content: Some("All tasks resolved".to_string()),
-            log_suggestion: Some(PathBuf::from("/path/to/logs/status_proj.log")),
-        };
-
-        let mut buf = Vec::new();
-        render_project_status(&mut buf, &details).unwrap();
-        let output = String::from_utf8(buf).unwrap();
-        assert!(output.contains("Project: status_proj"));
-        assert!(output.contains("PID: 999"));
-        assert!(output.contains("All tasks resolved"));
-    }
-
-    #[test]
-    fn test_execute_status_not_found() {
-        let test_home = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join("test_home_project_status_not_found");
-        let _ = fs::remove_dir_all(&test_home);
-        fs::create_dir_all(test_home.join(".agy_orchestrator")).unwrap();
-
-        env::set_var("HOME", &test_home);
-
-        let res = execute_status("non_existent".to_string());
-        assert!(res.is_err());
-        if let Err(e) = res {
-            assert_eq!(e.kind(), io::ErrorKind::NotFound);
-        }
-
-        let _ = fs::remove_dir_all(&test_home);
-    }
-}
+5. **Error handling tests**:
+   - Asserts that `execute_status` and `execute_get_context` return `ErrorKind::NotFound` if the requested project is absent from state, verifying the propagated `io::Error`.
+   - Asserts that `execute_consolidate` returns `ErrorKind::PermissionDenied` if the targeted project is still running, and `ErrorKind::NotFound` if `report.md` is missing.

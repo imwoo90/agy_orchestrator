@@ -21,6 +21,7 @@ use crate::backend::chat_session::{
     get_brain_sessions,
     find_newest_brain_session,
     find_oldest_brain_session,
+    find_parent_brain_session,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -837,7 +838,7 @@ Failure to follow this will cause sandbox permission validation to time out and 
             let after_dirs = get_brain_sessions();
             let diff: std::collections::HashSet<_> = after_dirs.difference(&before_dirs).cloned().collect();
             let resolved_new_id = if !diff.is_empty() {
-                find_oldest_brain_session(&diff)
+                find_parent_brain_session(&diff, &prompt_payload)
             } else {
                 None
             };
