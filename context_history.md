@@ -617,3 +617,31 @@ None
 ## 4. CRITICAL ITEMS FOR REVIEW
 None
 
+
+
+# 📅 History log from 2026-05-29 06:39:03 (Spawned at 2026-05-25T23:15:48+09:00)
+
+# Subtask Report: Tailwind CSS Styling Fix & Test Concurrency Fix
+
+## 1. Summary of Completed Tasks
+- **Tailwind styling issue root-cause analysis**:
+  - Found that client-side unstyled rendering on port 8080 and 8085 happened because `DIOXUS_PUBLIC_PATH` was not set when a precompiled binary was run from stable installation directories like `~/.local/bin/`. Dioxus would look for assets relative to the inherited current working directory, which did not contain the assets, leading to style asset loading 404s.
+- **Dynamic asset path mapping**:
+  - Modified `src/main.rs` to always resolve the absolute path to `public/` next to the executable and set `DIOXUS_PUBLIC_PATH` dynamically if it exists.
+- **Restart handling & environment variable hygiene**:
+  - Enhanced dashboard process restart logic in `src/backend/upgrade.rs` to handle multiple PIDs and clean up outdated dashboard targets properly.
+- **Unit test race conditions resolve**:
+  - Introduced `TEST_MUTEX` in `src/backend/vault.rs` to serialize Rust tests that mutate the `HOME` environment variable process-wide, preventing flaky failures.
+- **QA Verification & Evolution**:
+  - Executed the safety harness (static integrity, clippy warnings, test suite) under Issue #82 to commit, sync, and resolve the Tailwind path issue.
+
+## 2. Crucial Design/Architectural Choices Made
+- **Dynamic absolute path injection**: Sets absolute paths dynamically rather than relying on current working directory, maintaining styling integrity during upgrades/restarts.
+- **Test Lock serialization**: Avoided complex mocking/isolation by simply serializing tests that mutate global process environments.
+
+## 3. Minor Choices Resolved Autonomously
+- Cleared out background debug and production servers along with Puppeteer automations cleanly to free system resources.
+
+## 4. CRITICAL ITEMS FOR REVIEW
+None
+
