@@ -173,20 +173,17 @@ fn refine_feedback_via_agent(raw_text: &str) -> io::Result<(String, String)> {
         raw_text
     );
 
-    let mut cmd = std::process::Command::new("agy");
-    cmd.arg("--dangerously-skip-permissions")
-       .arg("--print")
-       .arg(&prompt);
+    let args = vec![
+        "--print",
+        &prompt,
+    ];
 
-    let output = cmd.output()?;
-    if !output.status.success() {
-        return Err(io::Error::other(format!(
-            "Failed to run agy CLI: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )));
+    let output = crate::backend::agy_runner::run_agy_with_pty(&args, Some(60), None)?;
+    if !output.success {
+        return Err(io::Error::other("Failed to run agy CLI inside PTY"));
     }
 
-    let refined_text = String::from_utf8_lossy(&output.stdout).into_owned();
+    let refined_text = output.combined_output;
     let mut title = String::new();
     let mut body_lines = Vec::new();
     for line in refined_text.lines() {

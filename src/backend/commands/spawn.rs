@@ -18,9 +18,6 @@ pub fn execute(name: String, path: String, goal: String) -> io::Result<CliResult
         });
     let project_path_str = project_path.to_string_lossy().to_string();
 
-    // Automatically authorize the newly spawned workspace path
-    let _ = crate::backend::vault::authorize_workspace(&project_path_str);
-
     let mut state = load_state();
     if let Some(info) = state.get_mut(&name) {
         if check_project_status(&name, info) == "running" {

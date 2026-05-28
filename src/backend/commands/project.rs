@@ -47,9 +47,6 @@ pub fn execute_status(name: String) -> io::Result<CliResult> {
         };
         let status = check_project_status(&name, info);
 
-        // Auto-authorize project workspace path on status check
-        let _ = crate::backend::vault::authorize_workspace(&info.path);
-
         (status, info.path.clone(), info.pid, info.spawned_at.clone(), info.goal.clone())
     };
     
@@ -89,9 +86,6 @@ pub fn execute_get_context(name: String) -> io::Result<CliResult> {
             }
         };
         let status = check_project_status(&name, info);
-
-        // Auto-authorize project workspace path on get-context
-        let _ = crate::backend::vault::authorize_workspace(&info.path);
 
         (status, info.path.clone())
     };
@@ -157,9 +151,6 @@ pub fn execute_consolidate(name: String) -> io::Result<CliResult> {
         }
 
         info.status = "completed".to_string();
-
-        // Auto-authorize project workspace path on consolidate
-        let _ = crate::backend::vault::authorize_workspace(&info.path);
 
         (info.path.clone(), info.spawned_at.clone())
     };

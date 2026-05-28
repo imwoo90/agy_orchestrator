@@ -313,65 +313,49 @@ pub fn run_daemon_loop() -> io::Result<()> {
                     let full_prompt = format!("{}{}", goal, report_instruction);
                     let log_file_path = base_dir.join("logs").join(format!("{}.log", task_name));
                     
-                    if let Ok(log_file) = File::create(&log_file_path) {
-                        let mut cmd = Command::new("agy");
-                        cmd.arg("--add-dir")
-                            .arg(&workspace_path_str)
-                            .arg("--dangerously-skip-permissions")
-                            .arg("--print")
-                            .arg(&full_prompt)
-                            .stdout(Stdio::from(log_file.try_clone().unwrap()))
-                            .stderr(Stdio::from(log_file))
-                            .stdin(Stdio::null());
+                    let agy_args = vec![
+                        "--add-dir".to_string(),
+                        workspace_path_str.clone(),
+                        "--print".to_string(),
+                        full_prompt.clone(),
+                    ];
 
-                        #[cfg(unix)]
-                        {
-                            use std::os::unix::process::CommandExt;
-                            extern "C" {
-                                fn setsid() -> i32;
-                            }
-                            unsafe {
-                                cmd.pre_exec(|| {
-                                    setsid();
-                                    Ok(())
-                                });
+                    match crate::backend::agy_runner::spawn_agy_background(
+                        agy_args,
+                        Some(log_file_path.clone()),
+                        None,
+                    ) {
+                        Ok(pid) => {
+                            open_issue.status = "in-progress".to_string();
+                            let _ = save_issues(&issues);
+
+                            state.insert(
+                                task_name.clone(),
+                                ProjectInfo {
+                                    path: workspace_path_str.clone(),
+                                    goal: goal.clone(),
+                                    pid,
+                                    status: "running".to_string(),
+                                    spawned_at: Local::now().to_rfc3339(),
+                                },
+                            );
+                            state_changed = true;
+
+                            let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
+                            if let Ok(mut notify_file) = fs::OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open(&notifications_path)
+                            {
+                                let _ = writeln!(
+                                    notify_file,
+                                    "[{}] INFO: Spawned self-evolution task '{}' for issue #{} (PID: {}).",
+                                    timestamp, task_name, issue_id, pid
+                                );
                             }
                         }
-
-                        match cmd.spawn() {
-                            Ok(child) => {
-                                let pid = child.id();
-                                open_issue.status = "in-progress".to_string();
-                                let _ = save_issues(&issues);
-
-                                state.insert(
-                                    task_name.clone(),
-                                    ProjectInfo {
-                                        path: workspace_path_str.clone(),
-                                        goal: goal.clone(),
-                                        pid,
-                                        status: "running".to_string(),
-                                        spawned_at: Local::now().to_rfc3339(),
-                                    },
-                                );
-                                state_changed = true;
-
-                                let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
-                                if let Ok(mut notify_file) = fs::OpenOptions::new()
-                                    .create(true)
-                                    .append(true)
-                                    .open(&notifications_path)
-                                {
-                                    let _ = writeln!(
-                                        notify_file,
-                                        "[{}] INFO: Spawned self-evolution task '{}' for issue #{} (PID: {}).",
-                                        timestamp, task_name, issue_id, pid
-                                    );
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to spawn self-evolution task: {}", e);
-                            }
+                        Err(e) => {
+                            eprintln!("Failed to spawn self-evolution task: {}", e);
                         }
                     }
                 }

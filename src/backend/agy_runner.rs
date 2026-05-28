@@ -82,7 +82,11 @@ pub fn run_agy_with_pty(
         .join("|");
 
     let mut cmd = std::process::Command::new(&agy_bin);
-    cmd.args(args);
+    let filtered_args: Vec<&str> = args.iter()
+        .cloned()
+        .filter(|&arg| arg != "--dangerously-skip-permissions")
+        .collect();
+    cmd.args(&filtered_args);
 
     // 500ms의 짧은 read timeout을 설정하여 주기적인 로깅 및 타임아웃 체크를 지원합니다.
     match rexpect::session::spawn_command(cmd, Some(500)) {
@@ -215,18 +219,120 @@ pub fn spawn_agy_background(
     args: Vec<String>,
     log_path: Option<std::path::PathBuf>,
     timeout_secs: Option<u64>,
-) -> std::thread::JoinHandle<()> {
+) -> io::Result<u32> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    
     std::thread::spawn(move || {
-        let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        match run_agy_with_pty(&args_ref, timeout_secs, log_path.as_deref()) {
-            Ok(result) => {
-                if let Some(log) = log_path {
-                    let _ = std::fs::write(&log, &result.combined_output);
+        let agy_bin = std::env::var("AGY_BIN")
+            .unwrap_or_else(|_| {
+                let home = std::env::var("HOME").unwrap_or_else(|_| "/home/wimvm".to_string());
+                format!("{}/.local/bin/agy", home)
+            });
+
+        let mut cmd = std::process::Command::new(&agy_bin);
+        let workspace_dir = "/home/wimvm/works/agy_orchestrator";
+        if std::path::Path::new(workspace_dir).exists() {
+            cmd.arg("--add-dir");
+            cmd.arg(workspace_dir);
+            cmd.current_dir(workspace_dir);
+        }
+
+        // Filter out `--dangerously-skip-permissions`
+        let filtered_args: Vec<String> = args.into_iter()
+            .filter(|arg| arg != "--dangerously-skip-permissions")
+            .collect();
+        cmd.args(&filtered_args);
+
+        match rexpect::session::spawn_command(cmd, Some(500)) {
+            Ok(mut session) => {
+                // Access pid via shadow struct transmute
+                #[allow(dead_code)]
+                struct PtyProcessShadow {
+                    pty: std::os::fd::OwnedFd,
+                    child_pid: i32,
+                    kill_timeout: Option<std::time::Duration>,
+                }
+                let pid = unsafe {
+                    let shadow: &PtyProcessShadow = std::mem::transmute(session.process());
+                    shadow.child_pid as u32
+                };
+                
+                let _ = tx.send(Ok(pid));
+                
+                // Now run the PTY interaction loop just like run_agy_with_pty
+                let overall_timeout = std::time::Duration::from_secs(timeout_secs.unwrap_or(600));
+                let start_time = std::time::Instant::now();
+                let mut output_buf = String::new();
+                let mut log_file = if let Some(ref path) = log_path {
+                    let _ = std::fs::create_dir_all(path.parent().unwrap());
+                    std::fs::OpenOptions::new().create(true).append(true).open(path).ok()
+                } else {
+                    None
+                };
+
+                let combined_pattern = AUTO_APPROVE_PATTERNS
+                    .iter()
+                    .map(|(p, _)| format!("({})", p))
+                    .collect::<Vec<_>>()
+                    .join("|");
+
+                loop {
+                    if start_time.elapsed() >= overall_timeout {
+                        break;
+                    }
+                    match session.exp_regex(&combined_pattern) {
+                        Ok((before, matched_str)) => {
+                            output_buf.push_str(&before);
+                            output_buf.push_str(&matched_str);
+                            if let Some(ref mut file) = log_file {
+                                let _ = write!(file, "{}{}", before, matched_str);
+                                let _ = file.flush();
+                            }
+                            let response = AUTO_APPROVE_PATTERNS
+                                .iter()
+                                .find(|(p, _)| {
+                                    let literal = p.trim_matches(|c: char| {
+                                        matches!(c, '(' | ')' | '?' | '\\' | '^' | '$' | '*' | '+')
+                                    });
+                                    matched_str.contains(literal) || literal.is_empty()
+                                })
+                                .map(|(_, r)| *r)
+                                .unwrap_or("y");
+
+                            if session.send_line(response).is_err() {
+                                break;
+                            }
+                            if let Some(ref mut file) = log_file {
+                                let _ = writeln!(file, "{}", response);
+                                let _ = file.flush();
+                            }
+                        }
+                        Err(rexpect::error::Error::EOF { got, .. }) => {
+                            output_buf.push_str(&got);
+                            if let Some(ref mut file) = log_file {
+                                let _ = write!(file, "{}", got);
+                                let _ = file.flush();
+                            }
+                            break;
+                        }
+                        Err(rexpect::error::Error::Timeout { got, .. }) => {
+                            output_buf.push_str(&got);
+                            if let Some(ref mut file) = log_file {
+                                let _ = write!(file, "{}", got);
+                                let _ = file.flush();
+                            }
+                        }
+                        Err(_) => {
+                            break;
+                        }
+                    }
                 }
             }
             Err(e) => {
-                eprintln!("[agy_runner] spawn_agy_background 오류: {}", e);
+                let _ = tx.send(Err(io::Error::other(e.to_string())));
             }
         }
-    })
+    });
+
+    rx.recv().unwrap_or_else(|_| Err(io::Error::other("Thread hung during spawn")))
 }

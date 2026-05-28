@@ -90,6 +90,23 @@ pub fn find_newest_brain_session(diff: &HashSet<String>) -> Option<String> {
     newest_name
 }
 
+pub fn find_oldest_brain_session(diff: &HashSet<String>) -> Option<String> {
+    let mut oldest_name = None;
+    let mut oldest_time = std::time::SystemTime::now();
+    for name in diff {
+        let path = get_brain_dir().join(name);
+        if let Ok(meta) = fs::metadata(path) {
+            if let Ok(modified) = meta.modified() {
+                if modified < oldest_time {
+                    oldest_time = modified;
+                    oldest_name = Some(name.clone());
+                }
+            }
+        }
+    }
+    oldest_name
+}
+
 pub fn uuid_v4_fallback() -> String {
     if let Ok(uuid) = fs::read_to_string("/proc/sys/kernel/random/uuid") {
         uuid.trim().to_string()

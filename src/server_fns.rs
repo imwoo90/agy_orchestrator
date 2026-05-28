@@ -20,6 +20,7 @@ use crate::backend::chat_session::{
     save_chat_sessions,
     get_brain_sessions,
     find_newest_brain_session,
+    find_oldest_brain_session,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -271,11 +272,6 @@ pub async fn toggle_daemon() -> Result<bool, ServerFnError> {
 pub async fn spawn_project_task(name: String, path: String, goal: String) -> Result<(), ServerFnError> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let canonical_path = std::fs::canonicalize(std::path::Path::new(&path))
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| path.clone());
-        let _ = backend::vault::authorize_workspace(&canonical_path);
-
         let cli_struct = backend::cli::Cli {
             command: backend::cli::Commands::Spawn { name, path, goal }
         };
@@ -818,7 +814,6 @@ Failure to follow this will cause sandbox permission validation to time out and 
         // rexpect가 invoke_subagent 등에서 발생하는 unexpected interactive 팝업을
         // 자동으로 응답하여 hang을 방지합니다.
         let mut agy_args = vec![
-            "--dangerously-skip-permissions".to_string(),
             "--prompt".to_string(),
             prompt_payload.clone(),
         ];
@@ -838,7 +833,7 @@ Failure to follow this will cause sandbox permission validation to time out and 
             let after_dirs = get_brain_sessions();
             let diff: std::collections::HashSet<_> = after_dirs.difference(&before_dirs).cloned().collect();
             let resolved_new_id = if !diff.is_empty() {
-                find_newest_brain_session(&diff)
+                find_oldest_brain_session(&diff)
             } else {
                 None
             };
@@ -951,31 +946,6 @@ Failure to follow this will cause sandbox permission validation to time out and 
                 })
             }
         }
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        Err(ServerFnError::new("Only available on server"))
-    }
-}
-
-#[server]
-pub async fn check_workspace_auth(path: String) -> Result<bool, ServerFnError> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        Ok(backend::vault::is_workspace_authorized(&path))
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        Err(ServerFnError::new("Only available on server"))
-    }
-}
-
-#[server]
-pub async fn authorize_workspace_path(path: String) -> Result<(), ServerFnError> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        backend::vault::authorize_workspace(&path)
-            .map_err(|e| ServerFnError::new(e.to_string()))
     }
     #[cfg(target_arch = "wasm32")]
     {
