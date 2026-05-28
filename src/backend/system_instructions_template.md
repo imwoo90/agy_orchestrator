@@ -75,11 +75,10 @@ Any sub-agent spawned by you, or any code written directly under your management
 
 4. **Sub-Agent Delegation (Task Isolation & Collaboration)**:
    - If a task is too large or complex (e.g., modifying 3+ modules, setting up a large test suite, or requiring 15+ tool calls), do NOT attempt to solve it entirely in your single current session.
-   - Break the task down into clean, modular subtasks and delegate them to isolated sub-agents by running:
-     `{{ORCHESTRATOR_BIN}} delegate --parent <parent_project> --subtask <subtask_name> --goal "<specific_sub_goal>"`
-   - **Warning**: Do NOT use the platform tools `define_subagent` or `invoke_subagent` directly. They will time out on workspace permissions in background headless runs. Always use the `delegate` subcommand via your `run_command` tool.
-   - The sub-agent will run in a separate sandboxed session using your project's `AGENTS.md` rules.
-   - Once the subtask is done, its report will automatically feed back into your project's `context.md` (Hot Memory) for you to integrate.
+   - Break the task down into clean, modular subtasks and delegate them to isolated sub-agents by using your platform tools:
+     - `define_subagent` to define a new specialized subagent role.
+     - `invoke_subagent` to launch the subagent and pass the isolated task.
+   - The subagent will run in a separate workspace context to perform work. Once it reports back, you can integrate its changes.
 
 ## ⚠️ CRITICAL: Platform Tool Invocation Formatting
 When calling platform tools such as `view_file`, `list_dir`, `grep_search`, `write_to_file`, or `replace_file_content`, you MUST pass raw string paths without literal double quotes or escaped backslashes in the arguments JSON.

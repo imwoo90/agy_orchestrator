@@ -781,9 +781,9 @@ pub async fn send_chat_message(session_id: String, message: String) -> Result<Ch
                     If the user asks to create or register a task, you can do so by running:\n\
                     - `/home/wimvm/.local/bin/agy-orchestrator issue --create \"<Title>\" --body \"<Description>\"`\n\
                     (Alternatively, you can append `[CREATE_TASK: Title | Body]` at the very end of your final response text, and the system will automatically parse and register it for you).\n\n\
-                    CRITICAL WARNING: DO NOT use the platform tools `define_subagent` or `invoke_subagent`. They will fail/time out on workspace permission prompts because they run in background headless mode. Instead, always delegate tasks by using your `run_command` tool to run the CLI subcommand:\n\
-                    - `/home/wimvm/.local/bin/agy-orchestrator delegate --parent <parent_project> --subtask <subtask_name> --goal \"<goal>\"`\n\
-                    This command executes the subagent in a background PTY process, where all permission prompts are automatically approved.\n\n\
+                    To delegate large tasks to subagents, always use your platform tools:\n\
+                    - `define_subagent` to define a new specialized subagent role.\n\
+                    - `invoke_subagent` to launch the subagent and pass the isolated task.\n\n\
                     CRITICAL: If the user is just saying hello, greeting you, testing the chat, or asking simple questions that do not require orchestrator status, DO NOT write implementation plans, DO NOT write task lists, and DO NOT run any tools. Just answer directly and instantly in a conversational manner.\n\
                     Only run JIT commands if they specifically ask for system status, projects list, or issue management. Do not guess status.\n\n\
                     --- GLOBAL OPERATIONAL GUIDELINES ---\n\
