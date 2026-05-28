@@ -348,6 +348,11 @@ pub async fn get_chat_history(session_id: String) -> Result<Vec<ChatMessage>, Se
                             text = text.replace("<USER_REQUEST>", "").replace("</USER_REQUEST>", "").trim().to_string();
                         }
                     }
+
+                    if let Some(banner_idx) = text.find("==================================================") {
+                        text = text[..banner_idx].trim().to_string();
+                    }
+
                     history.push(ChatMessage {
                         is_user: true,
                         text,
