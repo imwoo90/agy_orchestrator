@@ -466,7 +466,7 @@ pub async fn get_chat_history(session_id: String) -> Result<Vec<ChatMessage>, Se
 pub async fn get_chat_sessions() -> Result<Vec<ChatSession>, ServerFnError> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        load_chat_sessions().map_err(|e| ServerFnError::new(e))
+        load_chat_sessions().map_err(ServerFnError::new)
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -491,7 +491,7 @@ pub async fn create_chat_session() -> Result<String, ServerFnError> {
         
         let mut sessions = load_chat_sessions().unwrap_or_default();
         sessions.push(new_session);
-        save_chat_sessions(&sessions).map_err(|e| ServerFnError::new(e))?;
+        save_chat_sessions(&sessions).map_err(ServerFnError::new)?;
         
         let base_dir = backend::vault::get_base_dir();
         let _ = std::fs::write(base_dir.join("active_chat_session_id.txt"), &id);
@@ -508,9 +508,11 @@ pub async fn create_chat_session() -> Result<String, ServerFnError> {
 pub async fn delete_chat_session(id: String) -> Result<(), ServerFnError> {
     #[cfg(not(target_arch = "wasm32"))]
     {
+        backend::agy_runner::terminate_persistent_session(&id);
+
         let mut sessions = load_chat_sessions().unwrap_or_default();
         sessions.retain(|s| s.id != id);
-        save_chat_sessions(&sessions).map_err(|e| ServerFnError::new(e))?;
+        save_chat_sessions(&sessions).map_err(ServerFnError::new)?;
         
         let brain_dir = backend::vault::get_brain_dir().join(&id);
         if brain_dir.exists() {
@@ -889,102 +891,26 @@ Failure to follow this will cause sandbox permission validation to time out and 
             )
         };
 
-        let brain_dir = backend::vault::get_brain_dir().join(&actual_session_id);
-        let transcript_path = brain_dir.join(".system_generated/logs/transcript_full.jsonl");
-        let is_new_session = !transcript_path.exists();
-
-        let before_dirs = if is_new_session {
-            get_brain_sessions()
-        } else {
-            std::collections::HashSet::new()
-        };
-
-        // agy_runner를 통해 PTY 환경에서 실행.
-        // rexpect가 invoke_subagent 등에서 발생하는 unexpected interactive 팝업을
-        // 자동으로 응답하여 hang을 방지합니다.
-        let mut agy_args = vec![
-            "--prompt".to_string(),
-            prompt_payload.clone(),
-        ];
-
-        if !is_new_session {
-            agy_args.push("--conversation".to_string());
-            agy_args.push(actual_session_id.clone());
-            agy_args.push("--continue".to_string());
+        if session_id != actual_session_id {
+            let old_dir = backend::vault::get_brain_dir().join(&session_id);
+            if old_dir.exists() {
+                let new_dir = backend::vault::get_brain_dir().join(&actual_session_id);
+                let _ = std::fs::rename(old_dir, new_dir);
+            }
+            register_draft_mapping(session_id.clone(), actual_session_id.clone());
         }
 
-        let agy_args_ref: Vec<&str> = agy_args.iter().map(|s| s.as_str()).collect();
-        // 타임아웃: 10분
-        let log_file_path = brain_dir.join(".system_generated/logs/agy_stdout.log");
-        let _agy_result = backend::agy_runner::run_agy_with_pty(&agy_args_ref, Some(600), Some(&log_file_path))
+        // 1. Ensure the persistent process is initialized and active
+        backend::agy_runner::get_or_create_persistent_session(&actual_session_id)
             .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-        let final_session_id = if is_new_session {
-            let after_dirs = get_brain_sessions();
-            let diff: std::collections::HashSet<_> = after_dirs.difference(&before_dirs).cloned().collect();
-            let resolved_new_id = if !diff.is_empty() {
-                find_parent_brain_session(&diff, &prompt_payload)
-            } else {
-                None
-            };
+        // 2. Send the message and wait for it to complete
+        let brain_dir = backend::vault::get_brain_dir().join(&actual_session_id);
+        let log_file_path = brain_dir.join(".system_generated/logs/agy_stdout.log");
+        backend::agy_runner::send_interactive_message(&actual_session_id, &prompt_payload, Some(&log_file_path))
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-            let resolved_id = if let Some(new_id) = resolved_new_id {
-                if new_id != actual_session_id {
-                    if let Ok(mut sessions) = load_chat_sessions() {
-                        if let Some(session) = sessions.iter_mut().find(|s| s.id == actual_session_id) {
-                            session.id = new_id.clone();
-                        }
-                        let _ = save_chat_sessions(&sessions);
-                    }
-
-                    let base_dir = backend::vault::get_base_dir();
-                    let _ = std::fs::write(base_dir.join("active_chat_session_id.txt"), &new_id);
-                }
-                register_draft_mapping(session_id.clone(), new_id.clone());
-                new_id
-            } else {
-                // Fallback to ls -td if directory diff is empty
-                if let Ok(path_output) = std::process::Command::new("sh")
-                    .arg("-c")
-                    .arg(format!("ls -td {}/*/ | grep -v '/draft-' | head -n 1", backend::vault::get_brain_dir().display()))
-                    .output()
-                {
-                    if path_output.status.success() {
-                        let path_str = String::from_utf8_lossy(&path_output.stdout).trim().to_string();
-                        if !path_str.is_empty() {
-                            if let Some(filename) = std::path::Path::new(&path_str).file_name() {
-                                let new_id = filename.to_string_lossy().into_owned();
-
-                                if new_id != actual_session_id {
-                                    if let Ok(mut sessions) = load_chat_sessions() {
-                                        if let Some(session) = sessions.iter_mut().find(|s| s.id == actual_session_id) {
-                                            session.id = new_id.clone();
-                                        }
-                                        let _ = save_chat_sessions(&sessions);
-                                    }
-
-                                    let base_dir = backend::vault::get_base_dir();
-                                    let _ = std::fs::write(base_dir.join("active_chat_session_id.txt"), &new_id);
-                                }
-                                register_draft_mapping(session_id.clone(), new_id.clone());
-                                new_id
-                            } else {
-                                actual_session_id.clone()
-                            }
-                        } else {
-                            actual_session_id.clone()
-                        }
-                    } else {
-                        actual_session_id.clone()
-                    }
-                } else {
-                    actual_session_id.clone()
-                }
-            };
-            resolved_id
-        } else {
-            actual_session_id.clone()
-        };
+        let final_session_id = actual_session_id.clone();
 
         // Cleanup draft mapping on return
         remove_draft_mapping(&session_id);

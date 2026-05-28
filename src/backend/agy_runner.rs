@@ -402,3 +402,209 @@ pub fn spawn_agy_background(
 ) -> io::Result<u32> {
     Err(io::Error::new(io::ErrorKind::Unsupported, "PTY spawning requires 'server' feature"))
 }
+
+#[cfg(feature = "server")]
+pub struct ActiveSession {
+    pub session: rexpect::session::PtySession,
+    pub pid: u32,
+}
+
+#[cfg(feature = "server")]
+pub static ACTIVE_SESSIONS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, ActiveSession>>> = std::sync::OnceLock::new();
+
+#[cfg(feature = "server")]
+fn find_auto_approve_response(matched_str: &str) -> &'static str {
+    AUTO_APPROVE_PATTERNS
+        .iter()
+        .find(|(p, _)| {
+            let literal = p.trim_matches(|c: char| {
+                matches!(c, '(' | ')' | '?' | '\\' | '^' | '$' | '*' | '+')
+            });
+            matched_str.contains(literal) || literal.is_empty()
+        })
+        .map(|(_, r)| *r)
+        .unwrap_or("y")
+}
+
+#[cfg(feature = "server")]
+pub fn get_or_create_persistent_session(conversation_id: &str) -> io::Result<u32> {
+    let mut map = ACTIVE_SESSIONS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new())).lock().unwrap();
+    
+    if let Some(active) = map.get(conversation_id) {
+        if !crate::backend::state::is_pid_alive(active.pid) {
+            map.remove(conversation_id);
+        }
+    }
+    
+    if !map.contains_key(conversation_id) {
+        let agy_bin = std::env::var("AGY_BIN").unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/home/wimvm".to_string());
+            format!("{}/.local/bin/agy", home)
+        });
+        
+        let mut cmd = std::process::Command::new(&agy_bin);
+        let workspace_dir = "/home/wimvm/works/agy_orchestrator";
+        if std::path::Path::new(workspace_dir).exists() {
+            cmd.arg("--add-dir");
+            cmd.arg(workspace_dir);
+            cmd.current_dir(workspace_dir);
+        }
+        cmd.arg("--conversation");
+        cmd.arg(conversation_id);
+        
+        let mut session = rexpect::session::spawn_command(cmd, Some(600_000))
+            .map_err(|e| io::Error::other(e.to_string()))?;
+            
+        #[allow(dead_code)]
+        struct PtyProcessShadow {
+            pty: std::os::fd::OwnedFd,
+            child_pid: i32,
+            kill_timeout: Option<std::time::Duration>,
+        }
+        let pid = unsafe {
+            let shadow: &PtyProcessShadow = std::mem::transmute(session.process());
+            shadow.child_pid as u32
+        };
+        
+        const REPL_PROMPT_PATTERN: &str = r"(\x1b\[94m>\x1b\[m|(?:\r\n|\n)>\r\n)";
+        let combined_pattern = format!(
+            "({})|({})",
+            AUTO_APPROVE_PATTERNS.iter().map(|(p, _)| format!("({})", p)).collect::<Vec<_>>().join("|"),
+            REPL_PROMPT_PATTERN
+        );
+        
+        loop {
+            match session.exp_regex(&combined_pattern) {
+                Ok((_, matched)) => {
+                    let is_repl_prompt = matched.contains('>') && (matched.contains('\n') || matched.contains("\x1b[94m"));
+                    if is_repl_prompt {
+                        break;
+                    } else {
+                        let response = find_auto_approve_response(&matched);
+                        let _ = session.send_line(response);
+                    }
+                }
+                Err(e) => return Err(io::Error::other(format!("Failed to reach initial REPL prompt: {}", e))),
+            }
+        }
+        
+        map.insert(conversation_id.to_string(), ActiveSession {
+            session,
+            pid,
+        });
+    }
+    
+    Ok(map.get(conversation_id).unwrap().pid)
+}
+
+#[cfg(feature = "server")]
+pub fn send_interactive_message(
+    conversation_id: &str,
+    prompt: &str,
+    log_path: Option<&std::path::Path>,
+) -> io::Result<()> {
+    let mut map = ACTIVE_SESSIONS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new())).lock().unwrap();
+    let active = map.get_mut(conversation_id)
+        .ok_or_else(|| io::Error::other("Session not found"))?;
+        
+    let mut log_file = if let Some(path) = log_path {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        Some(std::fs::OpenOptions::new().create(true).append(true).open(path)?)
+    } else {
+        None
+    };
+
+    active.session.send_line(prompt).map_err(|e| io::Error::other(e.to_string()))?;
+    
+    const REPL_PROMPT_PATTERN: &str = r"(\x1b\[94m>\x1b\[m|(?:\r\n|\n)>\r\n)";
+    let combined_pattern = format!(
+        "({})|({})",
+        AUTO_APPROVE_PATTERNS.iter().map(|(p, _)| format!("({})", p)).collect::<Vec<_>>().join("|"),
+        REPL_PROMPT_PATTERN
+    );
+    
+    let mut last_timeout_got_len = 0;
+    
+    loop {
+        match active.session.exp_regex(&combined_pattern) {
+            Ok((before, matched)) => {
+                if let Some(file) = log_file.as_mut() {
+                    let _ = write!(file, "{}{}", before, matched);
+                    let _ = file.flush();
+                }
+                
+                let is_repl_prompt = matched.contains('>') && (matched.contains('\n') || matched.contains("\x1b[94m"));
+                if is_repl_prompt {
+                    break;
+                } else {
+                    let response = find_auto_approve_response(&matched);
+                    active.session.send_line(response).map_err(|e| io::Error::other(e.to_string()))?;
+                    if let Some(file) = log_file.as_mut() {
+                        let _ = writeln!(file, "{}", response);
+                        let _ = file.flush();
+                    }
+                }
+                last_timeout_got_len = 0;
+            }
+            Err(rexpect::error::Error::EOF { got, .. }) => {
+                if got.len() > last_timeout_got_len {
+                    if let Some(file) = log_file.as_mut() {
+                        let _ = write!(file, "{}", &got[last_timeout_got_len..]);
+                        let _ = file.flush();
+                    }
+                }
+                return Err(io::Error::other("Process terminated prematurely (EOF)"));
+            }
+            Err(rexpect::error::Error::Timeout { got, .. }) => {
+                if got.len() > last_timeout_got_len {
+                    if let Some(file) = log_file.as_mut() {
+                        let _ = write!(file, "{}", &got[last_timeout_got_len..]);
+                        let _ = file.flush();
+                    }
+                    last_timeout_got_len = got.len();
+                }
+                if !crate::backend::state::is_pid_alive(active.pid) {
+                    return Err(io::Error::other("Process timed out and is dead"));
+                }
+            }
+            Err(e) => return Err(io::Error::other(format!("Error reading process output: {}", e))),
+        }
+    }
+    
+    Ok(())
+}
+
+#[cfg(feature = "server")]
+pub fn terminate_persistent_session(conversation_id: &str) {
+    let mut map = ACTIVE_SESSIONS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new())).lock().unwrap();
+    if let Some(mut active) = map.remove(conversation_id) {
+        let _ = active.session.send_line("exit");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        
+        if crate::backend::state::is_pid_alive(active.pid) {
+            let _ = std::process::Command::new("kill")
+                .arg("-9")
+                .arg(active.pid.to_string())
+                .status();
+        }
+    }
+}
+
+#[cfg(not(feature = "server"))]
+pub fn get_or_create_persistent_session(_conversation_id: &str) -> io::Result<u32> {
+    Err(io::Error::new(io::ErrorKind::Unsupported, "Persistent sessions require 'server' feature"))
+}
+
+#[cfg(not(feature = "server"))]
+pub fn send_interactive_message(
+    _conversation_id: &str,
+    _prompt: &str,
+    _log_path: Option<&std::path::Path>,
+) -> io::Result<()> {
+    Err(io::Error::new(io::ErrorKind::Unsupported, "Persistent sessions require 'server' feature"))
+}
+
+#[cfg(not(feature = "server"))]
+pub fn terminate_persistent_session(_conversation_id: &str) {}

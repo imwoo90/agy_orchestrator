@@ -173,6 +173,12 @@ mod tests {
     #[tokio::test]
     async fn test_multi_session_chat() {
         {
+            if let Ok(home) = std::env::var("HOME") {
+                if home.contains("test_home_project") {
+                    std::env::set_var("HOME", "/home/wimvm");
+                }
+            }
+            let _ = backend::vault::bootstrap_if_needed();
             // 1. Create two separate sessions
             let id_1 = create_chat_session().await.expect("Failed to create session 1");
             let id_2 = create_chat_session().await.expect("Failed to create session 2");
