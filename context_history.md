@@ -527,3 +527,93 @@ None
 ## 4. CRITICAL ITEMS FOR REVIEW
 None
 
+
+
+# 📅 History log from 2026-05-29 02:19:01 (Spawned at 2026-05-25T23:15:48+09:00)
+
+# Subtask Report: Dioxus Chat UI Bug Fixes
+
+## 1. Summary of Completed Tasks
+- **Diagnostics Check**: Reviewed the dashboard chat components and server function interfaces to find why empty responses were appearing and why the user's speech bubble disappeared during progress polling.
+- **Fixed Empty Responses**:
+  - Located the `get_chat_history` function inside [server_fns.rs](file:///home/wimvm/works/agy_orchestrator/src/server_fns.rs#L301-L383).
+  - Identified that intermediate `PLANNER_RESPONSE` steps from the agent execution that only perform tool calls (and thus have empty content text) were being returned as empty chat messages.
+  - Added an `if !text.is_empty()` check to ignore empty planner responses, preventing blank speech bubbles from showing up in the UI.
+- **Fixed Disappearing User Speech Bubbles**:
+  - Located the `send_custom_message` function inside [chat.rs](file:///home/wimvm/works/agy_orchestrator/src/frontend/components/chat.rs#L350-L457).
+  - Identified a race condition: the frontend starts real-time history polling immediately upon sending a message, but since the background `agy` process takes 1-3 seconds to start up and write the initial user message to `transcript_full.jsonl`, the initial poll reads the old history (excluding the new user message) and overwrites the local chat history, causing the user's bubble to temporarily disappear.
+  - Modified the polling thread to search if the retrieved history contains the sent user message (`contains_sent`). If not, it keeps/appends the user's message to the end of the history list, keeping the user's bubble visible at all times.
+- **Compilation & Test Verification**:
+  - Ran `cargo check` and `cargo test` successfully, with all 16 tests passing.
+  - Ran `self-upgrade` subcommand locally to verify and install the upgraded binary on the system.
+
+## 2. Crucial Design/Architectural Choices Made
+- **Optimistic UI Preservation**: Instead of waiting for the backend process to fully launch and write the first log line, we merged local state with backend history on the client side. This provides a latency-free, smooth UI transition while keeping the backend as the ultimate source of truth.
+- **Log Parsing Filtering**: We filtered out empty planner responses directly in `get_chat_history` on the backend so that all API consumers (like CLI formatting, dashboard UI, and external logs) automatically get cleaned text history without blank lines.
+
+## 3. Minor Choices Resolved Autonomously
+- Avoided adding any state machine complexity to Dioxus signals on the frontend by simply doing an `any()` check against the polled history vector before rendering/updating.
+
+## 4. CRITICAL ITEMS FOR REVIEW
+None
+
+
+
+# 📅 History log from 2026-05-29 02:22:42 (Spawned at 2026-05-25T23:15:48+09:00)
+
+# Subtask Report: Monospace TUI-Style Tool Call Boxes in Chat UI
+
+## 1. Summary of Completed Tasks
+- **Diagnostics Check**: Read user's feedback expressing the preference to see tool calls in a structured, nice format instead of completely hiding them or showing blank lines.
+- **Implemented Monospace TUI Box Logger**:
+  - Modified [server_fns.rs](file:///home/wimvm/works/agy_orchestrator/src/server_fns.rs#L361-L450) inside `get_chat_history`.
+  - Added a JSON parser to extract `tool_calls` from each transcript line.
+  - Implemented an ASCII TUI-like layout wrapper (`┌─────┐`) for monospace blocks.
+  - Added specialized tool formatting for:
+    - `run_command`: Shows target shell command `💻 $ [CommandLine]`.
+    - `view_file` / `write_to_file` / `replace_file_content` / `multi_replace_file_content`: Shows only the simple filename `📄 file: [filename]`.
+    - `grep_search`: Shows target search string `🔍 query: "[Query]"`.
+    - `list_dir`: Shows target directory path `📂 dir: [DirectoryPath]`.
+    - `invoke_subagent`: Shows active subagent role `👤 subagent: [Role]`.
+  - Added an inner helper closure `clean_val` to recursively strip outer escaped double-quotes (`\"`) and backslashes (`\`) generated during serialization.
+- **Compilation & Deployment**:
+  - Verified compilation via `cargo check` and successfully ran all 16 tests in the test suite.
+  - Deployed upgraded version using `self-upgrade` which dynamically restarted the system daemon with PID 1530667.
+
+## 2. Crucial Design/Architectural Choices Made
+- **MarkdownMonospace Blocks**: Encapsulating the TUI status boxes in code block markers (````) guarantees they render using a monospace font on the browser dashboard, aligning box edges precisely.
+- **Dynamic Argument Stripping**: Staged recursive stripping of outer escaped quotes prevents backslash pollution in filenames and commands.
+
+## 3. Minor Choices Resolved Autonomously
+- Chose to limit file paths to their simple basenames (using `std::path::Path::file_name`) inside the tool boxes to keep lines short and tidy.
+
+## 4. CRITICAL ITEMS FOR REVIEW
+None
+
+
+
+# 📅 History log from 2026-05-29 02:32:46 (Spawned at 2026-05-25T23:15:48+09:00)
+
+# Subtask Report: Smart Chat Scrolling Implementation
+
+## 1. Summary of Completed Tasks
+- **Diagnostics Check**: Identified the scrolling issue where the UI would forcefully scroll the chat window to the bottom on every polling tick (every 1.5 seconds) while a background task was running, disrupting reading past history.
+- **Implemented Smart Scrolling**:
+  - Modified [chat.rs](file:///home/wimvm/works/agy_orchestrator/src/frontend/components/chat.rs#L295-L325) inside `use_effect`.
+  - Replaced the unconditional `el.scrollTop = el.scrollHeight;` scroll logic with a smart scroll-state tracker.
+  - Initialized a scroll event listener on the container `chat-messages-container` to track if the user is scrolled near the bottom (`scrollHeight - scrollTop - clientHeight < 50`).
+  - Only triggers the scroll-to-bottom operation if `wasAtBottom` is true or if the room changes (`roomChanged`).
+  - Automatically resets scrolling to the bottom when the user clicks/switches to a different chat session ID.
+- **Compilation & Deploy**:
+  - Rebuilt debug server and client WASM assets using `dx build`.
+  - Restarted the active dashboard server (`target/dx/agy-orchestrator/debug/web/server`) on port 8080.
+
+## 2. Crucial Design/Architectural Choices Made
+- **Client-Side Scroll State Tracking**: Storing the scroll state (`wasAtBottom`) in the DOM element's dataset (`el.dataset`) keeps it lightweight and avoids triggers/re-renders from Dioxus component lifecycle state.
+
+## 3. Minor Choices Resolved Autonomously
+- None.
+
+## 4. CRITICAL ITEMS FOR REVIEW
+None
+

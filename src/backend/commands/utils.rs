@@ -266,7 +266,7 @@ pub fn get_active_dashboard_info() -> Option<(u32, u16)> {
                         continue;
                     }
 
-                    let is_orchestrator = args[0].contains("agy-orchestrator");
+                    let is_orchestrator = args[0].contains("agy-orchestrator") || args[0].contains("server");
                     let has_dashboard = args.iter().any(|arg| arg == "dashboard");
 
                     if is_orchestrator && has_dashboard {

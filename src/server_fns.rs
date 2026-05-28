@@ -366,11 +366,91 @@ pub async fn get_chat_history(session_id: String) -> Result<Vec<ChatMessage>, Se
                             text = text.replace(full_tag, "").trim().to_string();
                         }
                     }
-                    history.push(ChatMessage {
-                        is_user: false,
-                        text,
-                        timestamp,
-                    });
+                    
+                    let clean_val = |s: &str| -> String {
+                        let mut val = s.trim();
+                        while val.starts_with('\\') || val.starts_with('"') {
+                            val = &val[1..];
+                        }
+                        while val.ends_with('\\') || val.ends_with('"') {
+                            val = &val[..val.len() - 1];
+                        }
+                        val.trim().to_string()
+                    };
+
+                    let mut tool_desc = String::new();
+                    if let Some(tool_calls) = json["tool_calls"].as_array() {
+                        if !tool_calls.is_empty() {
+                            tool_desc.push_str("```\n");
+                            tool_desc.push_str("┌────────────────────────────────────────────────────────┐\n");
+                            tool_desc.push_str("│  🔧 TOOL EXECUTION                                      │\n");
+                            tool_desc.push_str("└────────────────────────────────────────────────────────┘\n");
+                            for tool in tool_calls {
+                                let name = tool["name"].as_str().unwrap_or("");
+                                let args = &tool["args"];
+                                
+                                let action = args["toolAction"].as_str()
+                                    .or_else(|| args["toolSummary"].as_str())
+                                    .unwrap_or("")
+                                    .trim_matches('"');
+                                
+                                let action_clean = clean_val(action);
+                                if !action_clean.is_empty() {
+                                    tool_desc.push_str(&format!(" ▶ {}\n", action_clean));
+                                } else {
+                                    tool_desc.push_str(&format!(" ▶ Executing: {}\n", name));
+                                }
+                                
+                                if name == "run_command" {
+                                    if let Some(cmd) = args["CommandLine"].as_str() {
+                                        tool_desc.push_str(&format!("   💻 $ {}\n", clean_val(cmd)));
+                                    }
+                                } else if name == "view_file" || name == "write_to_file" || name == "replace_file_content" || name == "multi_replace_file_content" {
+                                    if let Some(path) = args["AbsolutePath"].as_str().or_else(|| args["TargetFile"].as_str()) {
+                                        let path_clean = clean_val(path);
+                                        let file_name = std::path::Path::new(&path_clean)
+                                            .file_name()
+                                            .and_then(|f| f.to_str())
+                                            .unwrap_or(&path_clean);
+                                        tool_desc.push_str(&format!("   📄 file: {}\n", file_name));
+                                    }
+                                } else if name == "grep_search" {
+                                    if let Some(query) = args["Query"].as_str() {
+                                        tool_desc.push_str(&format!("   🔍 query: \"{}\"\n", clean_val(query)));
+                                    }
+                                } else if name == "list_dir" {
+                                    if let Some(path) = args["DirectoryPath"].as_str() {
+                                        tool_desc.push_str(&format!("   📂 dir: {}\n", clean_val(path)));
+                                    }
+                                } else if name == "invoke_subagent" {
+                                    if let Some(subagents) = args["Subagents"].as_array() {
+                                        for agent in subagents {
+                                            if let Some(role) = agent["Role"].as_str() {
+                                                tool_desc.push_str(&format!("   👤 subagent: {}\n", clean_val(role)));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            tool_desc.push_str("──────────────────────────────────────────────────────────\n");
+                            tool_desc.push_str("```");
+                        }
+                    }
+
+                    if !text.is_empty() || !tool_desc.is_empty() {
+                        let mut final_text = text;
+                        if !tool_desc.is_empty() {
+                            if !final_text.is_empty() {
+                                final_text.push_str("\n\n");
+                            }
+                            final_text.push_str(&tool_desc);
+                        }
+                        history.push(ChatMessage {
+                            is_user: false,
+                            text: final_text,
+                            timestamp,
+                        });
+                    }
                 }
             }
         }

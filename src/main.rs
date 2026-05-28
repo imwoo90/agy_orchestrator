@@ -17,6 +17,41 @@ pub use server_fns::*;
 fn main() -> std::io::Result<()> {
     #[cfg(not(target_arch = "wasm32"))]
     {
+        // Setup DIOXUS_PUBLIC_PATH to find the correct asset path in development or build mode.
+        let exe_public = std::env::current_exe().ok()
+            .and_then(|exe| exe.parent().map(|p| p.join("public")));
+        let has_exe_public = exe_public.as_ref().map(|p| p.exists()).unwrap_or(false);
+
+        if !has_exe_public {
+            std::env::remove_var("CARGO_MANIFEST_DIR");
+            std::env::set_var("DIOXUS_CLI_ENABLED", "true");
+            if std::env::var("DIOXUS_PUBLIC_PATH").is_err() {
+                if let Ok(workspace_root) = backend::health::find_workspace_root() {
+                    let debug_public = workspace_root.join("target/dx/agy-orchestrator/debug/web/public");
+                    let release_public = workspace_root.join("target/dx/agy-orchestrator/release/web/public");
+                    if debug_public.exists() {
+                        std::env::set_var("DIOXUS_PUBLIC_PATH", &debug_public);
+                    } else if release_public.exists() {
+                        std::env::set_var("DIOXUS_PUBLIC_PATH", &release_public);
+                    }
+                }
+            }
+
+            // Always copy tailwind.css to the target public assets directory if it exists
+            if let Ok(workspace_root) = backend::health::find_workspace_root() {
+                if let Ok(pub_path_str) = std::env::var("DIOXUS_PUBLIC_PATH") {
+                    let pub_path = std::path::PathBuf::from(pub_path_str);
+                    let src_tailwind = workspace_root.join("assets/tailwind.css");
+                    if src_tailwind.exists() && pub_path.exists() {
+                        let dest_assets = pub_path.join("assets");
+                        let _ = std::fs::create_dir_all(&dest_assets);
+                        let dest_tailwind = dest_assets.join("tailwind.css");
+                        let _ = std::fs::copy(&src_tailwind, &dest_tailwind);
+                    }
+                }
+            }
+        }
+
         use clap::Parser;
         let cli_parsed = backend::cli::Cli::try_parse();
 

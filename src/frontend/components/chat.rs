@@ -293,24 +293,47 @@ pub fn ChatTab(
     let is_loading = use_signal(HashMap::<String, bool>::new);
 
     use_effect(move || {
-        // Track active_session_id, messages, and is_loading to trigger when they change
-        let _ = active_session_id.read();
+        // Track dependencies
+        let active_id = active_session_id.read().clone().unwrap_or_default();
         let _ = messages.read();
         let _ = is_loading.read();
         
         // Scroll the message stream area to the bottom & focus input
-        let _ = eval("
-            setTimeout(() => {
+        let js = format!(r#"
+            setTimeout(() => {{
                 let el = document.getElementById('chat-messages-container');
-                if (el) {
-                    el.scrollTop = el.scrollHeight;
-                }
+                if (el) {{
+                    let currentRoomId = '{}';
+                    let roomChanged = el.dataset.lastRoomId !== currentRoomId;
+                    el.dataset.lastRoomId = currentRoomId;
+
+                    if (!el.dataset.hasScrollListener) {{
+                        el.dataset.hasScrollListener = 'true';
+                        el.dataset.wasAtBottom = 'true';
+                        el.addEventListener('scroll', () => {{
+                            let threshold = 50;
+                            let atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+                            el.dataset.wasAtBottom = atBottom ? 'true' : 'false';
+                        }});
+                    }}
+
+                    if (roomChanged) {{
+                        el.dataset.wasAtBottom = 'true';
+                    }}
+
+                    let shouldScroll = el.dataset.wasAtBottom === 'true';
+                    if (shouldScroll) {{
+                        el.scrollTop = el.scrollHeight;
+                    }}
+                }}
                 let input = document.getElementById('chat-input-field');
-                if (input) {
+                if (input) {{
                     input.focus();
-                }
-            }, 50);
-        ");
+                }}
+            }}, 50);
+        "#, active_id);
+        
+        let _ = eval(&js);
     });
 
     let active_id_opt = active_session_id.read().clone();
@@ -369,6 +392,7 @@ pub fn ChatTab(
         let active_id_poll = active_id_spawn.clone();
         let mut msg_list_poll = messages;
         let loading_poll = is_loading;
+        let sent_text = text.clone();
         
         spawn(async move {
             #[cfg(target_arch = "wasm32")]
@@ -381,8 +405,16 @@ pub fn ChatTab(
             }
 
             while loading_poll.read().get(&active_id_poll).copied().unwrap_or(false) {
-                if let Ok(history) = crate::get_chat_history(active_id_poll.clone()).await {
+                if let Ok(mut history) = crate::get_chat_history(active_id_poll.clone()).await {
                     if !history.is_empty() {
+                        let contains_sent = history.iter().any(|m| m.is_user && m.text == sent_text);
+                        if !contains_sent {
+                            history.push(ChatMessage {
+                                is_user: true,
+                                text: sent_text.clone(),
+                                timestamp: chrono::Local::now().format("%H:%M").to_string(),
+                            });
+                        }
                         msg_list_poll.write().insert(active_id_poll.clone(), history);
                     }
                 }

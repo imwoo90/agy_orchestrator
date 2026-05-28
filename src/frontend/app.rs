@@ -85,7 +85,17 @@ pub fn App() -> Element {
     });
 
     rsx! {
-        document::Link { rel: "stylesheet", href: asset!("assets/tailwind.css") }
+        document::Link {
+            rel: "stylesheet",
+            href: {
+                let path = asset!("assets/tailwind.css").to_string();
+                if path.starts_with("/assets/") || path.starts_with("./assets/") {
+                    path
+                } else {
+                    "/assets/tailwind.css".to_string()
+                }
+            }
+        }
         document::Link { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" }
 
         div { class: "bg-slate-950 text-slate-100 h-screen overflow-hidden font-sans flex flex-col selection:bg-indigo-500 selection:text-white",
