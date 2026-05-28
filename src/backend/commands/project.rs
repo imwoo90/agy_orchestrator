@@ -173,44 +173,10 @@ pub fn parse_lessons_learned(content: &str) -> String {
     lessons_content.trim().to_string()
 }
 
-/// Evaluates sub-agent naming to automatically append completed reports to parent contexts.
-pub fn handle_parent_feedback_loop(
-    name: &str,
-    report_content: &str,
-    state: &std::collections::HashMap<String, ProjectInfo>,
-) -> io::Result<Option<String>> {
-    // Sub-agent report feedback loop (Child -> Parent context feedback)
-    if !name.contains("_sub_") {
-        return Ok(None);
-    }
-    if let Some(sub_idx) = name.rfind("_sub_") {
-        let parent_name = &name[..sub_idx];
-        let subtask_name = &name[sub_idx + 5..];
-        
-        if let Some(parent_info) = state.get(parent_name) {
-            let parent_context_path = Path::new(&parent_info.path).join("context.md");
-            let mut parent_context_file = fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&parent_context_path)?;
-                
-            let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
-            writeln!(
-                parent_context_file,
-                "\n\n==================================================\n\
-                 # 📢 Subtask Completed: '{}' at {}\n\
-                 - Sub-agent Name: {}\n\
-                 - Completed Report:\n\n\
-                 {}\n\
-                 ==================================================\n",
-                subtask_name, timestamp, name, report_content.trim()
-            )?;
-            return Ok(Some(parent_name.to_string()));
-        }
-    }
-    Ok(None)
-}
 
+
+// Lists all registered projects in the global state projects.json
+// by writing a formatted table layout to stdout.
 pub fn execute_list() -> io::Result<CliResult> {
     let mut state = load_state();
     render_projects_table(&mut io::stdout(), &mut state)?;
@@ -306,6 +272,9 @@ pub fn execute_get_context(name: String) -> io::Result<CliResult> {
     Ok(CliResult::Exit)
 }
 
+// Consolidates the completed subtask report (report.md) into the project's history log.
+// It extracts lessons learned, appends the formatted report to history logs,
+// initializes active context (context.md) if missing, and removes the temporary report.md.
 pub fn execute_consolidate(name: String) -> io::Result<CliResult> {
     let mut state = load_state();
     let base_dir = get_base_dir();
@@ -408,9 +377,7 @@ pub fn execute_consolidate(name: String) -> io::Result<CliResult> {
         println!("Cleaned up report.md after consolidation.");
     }
 
-    if let Some(parent_name) = handle_parent_feedback_loop(&name, &report_content, &state)? {
-        println!("Feedback Loop: Auto-injected subtask completed report into parent '{}' context.md", parent_name);
-    }
+
 
     save_state(&state)?;
 
@@ -419,6 +386,8 @@ pub fn execute_consolidate(name: String) -> io::Result<CliResult> {
     Ok(CliResult::Exit)
 }
 
+// Executes health checks on all registered projects to verify that
+// their background processes are still running and directories exist.
 pub fn execute_health_check() -> io::Result<CliResult> {
     println!("Running health checks on all registered targets...\n");
     let results = run_health_checks().map_err(|e| {
@@ -471,40 +440,7 @@ More info.
         assert!(parsed_kr.contains("- 이렇게 하시오."));
     }
 
-    #[test]
-    fn test_handle_parent_feedback_loop() {
-        let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        let parent_path = std::path::PathBuf::from(manifest_dir)
-            .join("target")
-            .join("test_home_project")
-            .join("parent_proj");
-        let _ = fs::remove_dir_all(&parent_path);
-        fs::create_dir_all(&parent_path).unwrap();
 
-        let mut state = HashMap::new();
-        state.insert(
-            "parent_proj".to_string(),
-            ProjectInfo {
-                path: parent_path.to_str().unwrap().to_string(),
-                pid: 1234,
-                spawned_at: "2026-05-28T12:00:00Z".to_string(),
-                status: "running".to_string(),
-                goal: "solve issue".to_string(),
-            },
-        );
-
-        let report = "Task is completed successfully!";
-        let parent = handle_parent_feedback_loop("parent_proj_sub_task", report, &state).unwrap();
-        assert_eq!(parent, Some("parent_proj".to_string()));
-
-        let parent_context = parent_path.join("context.md");
-        assert!(parent_context.exists());
-        let content = fs::read_to_string(parent_context).unwrap();
-        assert!(content.contains("Subtask Completed: 'task'"));
-        assert!(content.contains("Task is completed successfully!"));
-
-        let _ = fs::remove_dir_all(&parent_path);
-    }
 
     #[test]
     fn test_render_projects_table() {

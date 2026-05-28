@@ -136,15 +136,6 @@ pub enum Commands {
         #[arg(long)]
         query: String,
     },
-    /// Delegate a subtask to a sub-agent
-    Delegate {
-        #[arg(long)]
-        parent: String,
-        #[arg(long)]
-        subtask: String,
-        #[arg(long)]
-        goal: String,
-    },
     /// Run safety checks (Clippy, test) for self-evolution and auto-rollback on failure
     EvolutionHarness {
         /// The specific issue ID to validate

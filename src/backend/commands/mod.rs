@@ -64,9 +64,7 @@ pub fn execute(command: Commands) -> io::Result<CliResult> {
         Commands::SearchHistory { name, query } => {
             utils::execute_search_history(name, query)
         }
-        Commands::Delegate { parent, subtask, goal } => {
-            utils::execute_delegate(parent, subtask, goal)
-        }
+
         Commands::EvolutionHarness { issue_id } => {
             harness::execute(issue_id)
         }
