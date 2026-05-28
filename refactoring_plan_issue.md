@@ -1,10 +1,24 @@
-use std::io;
-use chrono::Local;
+# Refactoring Plan: Issue Command Modernization
 
-use crate::models::Issue;
-use crate::backend::issue::{load_issues, save_issues, sync_github_issues};
-use crate::backend::cli::CliResult;
+This document outlines the detailed refactoring plan for `src/backend/commands/issue.rs` in order to improve modularity, simplify maintenance, extract formatting logic, and replace the process exit code smell with standard idiomatic Rust error handling.
 
+---
+
+## 1. Objectives & Architectural Decisions
+
+* **Split Action Logic**: Extract separate logical branches (`list`, `create`, `resolve`, and `sync`) into individual helper functions to improve readability and isolation of concerns.
+* **Extract Presentation and Formatting Details**: Extract timestamp parsing, body truncation, and table rendering into dedicated formatting helpers to simplify CLI display adjustments.
+* **Fix process-level Code Smell**: Replace standard `std::process::exit(1)` with standard Rust error handling by returning `std::io::Error`. This allows the caller (like CLI entrypoint or API controllers) to handle failures cleanly and improves unit-testability.
+
+---
+
+## 2. Refactoring Outline & Helper Signatures
+
+### 2.1. Formatting & Presentation Helpers
+
+We will extract the details of formatting issue attributes and table rendering into pure helper functions:
+
+```rust
 /// Formats the RFC3339 timestamp of an issue for CLI tabular display.
 ///
 /// Converts "YYYY-MM-DDT..."" to "YYYY-MM-DD HH:MM:SS" (or similar prefix).
@@ -40,7 +54,14 @@ pub fn render_issues_table(issues: &[Issue]) {
         }
     }
 }
+```
 
+### 2.2. Command-Action Helpers
+
+We will encapsulate command logic in dedicated helper functions:
+
+#### A. Syncing GitHub Issues
+```rust
 /// Triggers GitHub synchronization and re-loads the latest list of issues.
 pub fn handle_sync() -> io::Result<Vec<Issue>> {
     println!("Syncing issues from remote GitHub repository...");
@@ -56,13 +77,19 @@ pub fn handle_sync() -> io::Result<Vec<Issue>> {
         }
     }
 }
+```
 
+#### B. Listing Registered Issues
+```rust
 /// Handles the tabular listing of registered issues.
 pub fn handle_list(issues: &[Issue]) -> io::Result<()> {
     render_issues_table(issues);
     Ok(())
 }
+```
 
+#### C. Creating a New Issue
+```rust
 /// Handles the creation and registration of a new issue.
 pub fn handle_create(issues: &mut Vec<Issue>, title: String, body: Option<String>) -> io::Result<()> {
     let next_id = issues.iter().map(|i| i.id).max().unwrap_or(0) + 1;
@@ -80,7 +107,10 @@ pub fn handle_create(issues: &mut Vec<Issue>, title: String, body: Option<String
     println!("Successfully registered issue #{} '{}'.", next_id, title);
     Ok(())
 }
+```
 
+#### D. Resolving an Issue
+```rust
 /// Handles marking an issue as resolved.
 ///
 /// Returns an `io::Error` with kind `NotFound` if the specified issue does not exist,
@@ -93,14 +123,21 @@ pub fn handle_resolve(issues: &mut [Issue], id: u32) -> io::Result<()> {
         println!("Successfully marked issue #{} as resolved.", id);
         Ok(())
     } else {
-        eprintln!("Error: Issue #{} not found.", id);
         Err(io::Error::new(
             io::ErrorKind::NotFound,
             format!("Error: Issue #{} not found.", id),
         ))
     }
 }
+```
 
+---
+
+## 3. Simplified Main Execute Function
+
+The main `execute` entrypoint will be simplified to a clean orchestrating routine:
+
+```rust
 pub fn execute(create: Option<String>, body: Option<String>, list: bool, resolve: Option<u32>, sync: bool) -> io::Result<CliResult> {
     let mut issues = load_issues();
     let mut performed_action = false;
@@ -126,69 +163,15 @@ pub fn execute(create: Option<String>, body: Option<String>, list: bool, resolve
     }
     Ok(CliResult::Exit)
 }
+```
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-    use std::env;
+---
 
-    fn setup_test_env() -> (std::path::PathBuf, Vec<Issue>) {
-        let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        let test_home = std::path::PathBuf::from(manifest_dir)
-            .join("target")
-            .join("test_home_issue");
-        fs::create_dir_all(test_home.join(".agy_orchestrator")).unwrap();
-        env::set_var("HOME", &test_home);
+## 4. Verification & Testing Strategy
 
-        let issues = vec![
-            Issue {
-                id: 1,
-                title: "Test Issue 1".to_string(),
-                body: "Body 1".to_string(),
-                status: "open".to_string(),
-                created_at: "2026-05-28T21:48:38+09:00".to_string(),
-                resolved_at: None,
-            },
-            Issue {
-                id: 2,
-                title: "Test Issue 2".to_string(),
-                body: "Body 2".to_string(),
-                status: "open".to_string(),
-                created_at: "2026-05-28T21:48:38+09:00".to_string(),
-                resolved_at: None,
-            },
-        ];
-        (test_home, issues)
-    }
-
-    #[test]
-    fn test_format_created_at() {
-        assert_eq!(format_created_at("2026-05-28T21:48:38+09:00"), "2026-05-28 21:48:38");
-        assert_eq!(format_created_at("invalid"), "invalid");
-    }
-
-    #[test]
-    fn test_truncate_body() {
-        assert_eq!(truncate_body("Hello World", 20), "Hello World");
-        assert_eq!(truncate_body("This is a very long body that needs truncation", 15), "This is a ve...");
-    }
-
-    #[test]
-    fn test_handle_resolve_success() {
-        let (_test_home, mut issues) = setup_test_env();
-        let res = handle_resolve(&mut issues, 1);
-        assert!(res.is_ok());
-        assert_eq!(issues[0].status, "resolved");
-        assert!(issues[0].resolved_at.is_some());
-    }
-
-    #[test]
-    fn test_handle_resolve_not_found() {
-        let (_test_home, mut issues) = setup_test_env();
-        let res = handle_resolve(&mut issues, 99);
-        assert!(res.is_err());
-        assert_eq!(res.unwrap_err().kind(), io::ErrorKind::NotFound);
-    }
-}
-
+1. **Verify No Regression**:
+   Verify that existing build patterns and dependencies compile successfully.
+2. **Clippy Compliance**:
+   Run `cargo clippy --all-targets -- -D warnings` to ensure there are no style or syntax compiler errors.
+3. **Evolution-Harness Validation**:
+   Validate via `agy-orchestrator evolution-harness` to ensure all structural tests and integrity constraints pass.

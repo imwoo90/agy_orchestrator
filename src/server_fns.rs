@@ -775,6 +775,9 @@ pub async fn send_chat_message(session_id: String, message: String) -> Result<Ch
                     If the user asks to create or register a task, you can do so by running:\n\
                     - `/home/wimvm/.local/bin/agy-orchestrator issue --create \"<Title>\" --body \"<Description>\"`\n\
                     (Alternatively, you can append `[CREATE_TASK: Title | Body]` at the very end of your final response text, and the system will automatically parse and register it for you).\n\n\
+                    CRITICAL WARNING: DO NOT use the platform tools `define_subagent` or `invoke_subagent`. They will fail/time out on workspace permission prompts because they run in background headless mode. Instead, always delegate tasks by using your `run_command` tool to run the CLI subcommand:\n\
+                    - `/home/wimvm/.local/bin/agy-orchestrator delegate --parent <parent_project> --subtask <subtask_name> --goal \"<goal>\"`\n\
+                    This command executes the subagent in a background PTY process, where all permission prompts are automatically approved.\n\n\
                     CRITICAL: If the user is just saying hello, greeting you, testing the chat, or asking simple questions that do not require orchestrator status, DO NOT write implementation plans, DO NOT write task lists, and DO NOT run any tools. Just answer directly and instantly in a conversational manner.\n\
                     Only run JIT commands if they specifically ask for system status, projects list, or issue management. Do not guess status.\n\n\
                     --- GLOBAL OPERATIONAL GUIDELINES ---\n\
@@ -826,7 +829,8 @@ Failure to follow this will cause sandbox permission validation to time out and 
 
         let agy_args_ref: Vec<&str> = agy_args.iter().map(|s| s.as_str()).collect();
         // 타임아웃: 10분
-        let _agy_result = backend::agy_runner::run_agy_with_pty(&agy_args_ref, Some(600), None)
+        let log_file_path = brain_dir.join(".system_generated/logs/agy_stdout.log");
+        let _agy_result = backend::agy_runner::run_agy_with_pty(&agy_args_ref, Some(600), Some(&log_file_path))
             .map_err(|e| ServerFnError::new(e.to_string()))?;
 
         let final_session_id = if is_new_session {
@@ -846,7 +850,7 @@ Failure to follow this will cause sandbox permission validation to time out and 
                         }
                         let _ = save_chat_sessions(&sessions);
                     }
-                    
+
                     let base_dir = backend::vault::get_base_dir();
                     let _ = std::fs::write(base_dir.join("active_chat_session_id.txt"), &new_id);
                 }
@@ -864,7 +868,7 @@ Failure to follow this will cause sandbox permission validation to time out and 
                         if !path_str.is_empty() {
                             if let Some(filename) = std::path::Path::new(&path_str).file_name() {
                                 let new_id = filename.to_string_lossy().into_owned();
-                                
+
                                 if new_id != actual_session_id {
                                     if let Ok(mut sessions) = load_chat_sessions() {
                                         if let Some(session) = sessions.iter_mut().find(|s| s.id == actual_session_id) {
@@ -872,7 +876,7 @@ Failure to follow this will cause sandbox permission validation to time out and 
                                         }
                                         let _ = save_chat_sessions(&sessions);
                                     }
-                                    
+
                                     let base_dir = backend::vault::get_base_dir();
                                     let _ = std::fs::write(base_dir.join("active_chat_session_id.txt"), &new_id);
                                 }

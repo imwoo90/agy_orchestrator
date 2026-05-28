@@ -737,7 +737,6 @@ dependencies = [
  "dioxus-config-macros",
  "dioxus-core",
  "dioxus-core-macro",
- "dioxus-devtools",
  "dioxus-document",
  "dioxus-fullstack",
  "dioxus-fullstack-macro",
@@ -745,7 +744,6 @@ dependencies = [
  "dioxus-hooks",
  "dioxus-html",
  "dioxus-liveview",
- "dioxus-logger",
  "dioxus-server",
  "dioxus-signals",
  "dioxus-ssr",
@@ -754,7 +752,6 @@ dependencies = [
  "manganis",
  "serde",
  "subsecond",
- "warnings",
 ]
 
 [[package]]

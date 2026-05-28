@@ -77,6 +77,7 @@ Any sub-agent spawned by you, or any code written directly under your management
    - If a task is too large or complex (e.g., modifying 3+ modules, setting up a large test suite, or requiring 15+ tool calls), do NOT attempt to solve it entirely in your single current session.
    - Break the task down into clean, modular subtasks and delegate them to isolated sub-agents by running:
      `{{ORCHESTRATOR_BIN}} delegate --parent <parent_project> --subtask <subtask_name> --goal "<specific_sub_goal>"`
+   - **Warning**: Do NOT use the platform tools `define_subagent` or `invoke_subagent` directly. They will time out on workspace permissions in background headless runs. Always use the `delegate` subcommand via your `run_command` tool.
    - The sub-agent will run in a separate sandboxed session using your project's `AGENTS.md` rules.
    - Once the subtask is done, its report will automatically feed back into your project's `context.md` (Hot Memory) for you to integrate.
 

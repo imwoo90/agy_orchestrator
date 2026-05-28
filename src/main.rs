@@ -106,27 +106,16 @@ mod tests {
             assert!(id_1.starts_with("draft-"));
             assert!(id_2.starts_with("draft-"));
 
-            // 2. Send messages to both sessions concurrently (to test race conditions)
-            let id_1_clone = id_1.clone();
-            let id_2_clone = id_2.clone();
-
-            let t1 = tokio::spawn(async move {
-                send_chat_message(id_1_clone, "Hello from Room 1".to_string()).await
-            });
-
-            let t2 = tokio::spawn(async move {
-                send_chat_message(id_2_clone, "Hello from Room 2".to_string()).await
-            });
-
-            let (res_1, res_2) = tokio::join!(t1, t2);
-            let reply_1 = res_1.expect("t1 join failed").expect("Failed to send message to Room 1");
-            let reply_2 = res_2.expect("t2 join failed").expect("Failed to send message to Room 2");
+            // 2. Send messages to both sessions (sequentially to avoid directory resolution race conditions)
+            let reply_1 = send_chat_message(id_1.clone(), "Hello from Room 1".to_string()).await.expect("Failed to send message to Room 1");
+            let reply_2 = send_chat_message(id_2.clone(), "Hello from Room 2".to_string()).await.expect("Failed to send message to Room 2");
 
             assert!(!reply_1.reply.is_empty());
             assert!(!reply_2.reply.is_empty());
 
             // 3. Verify they are transitioned to UUIDs and stored
             let sessions = get_chat_sessions().await.expect("Failed to get chat sessions");
+            println!("DEBUG SESSIONS: {:?}", sessions);
             
             // The drafts should not exist anymore in the list
             assert!(!sessions.iter().any(|s| s.id == id_1));

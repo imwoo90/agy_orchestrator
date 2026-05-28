@@ -88,9 +88,22 @@ pub fn run_agy_with_pty(
         .collect();
     cmd.args(&filtered_args);
 
-    // 500ms의 짧은 read timeout을 설정하여 주기적인 로깅 및 타임아웃 체크를 지원합니다.
     match rexpect::session::spawn_command(cmd, Some(500)) {
         Ok(mut session) => {
+            // Access pid via shadow struct transmute
+            #[allow(dead_code)]
+            struct PtyProcessShadow {
+                pty: std::os::fd::OwnedFd,
+                child_pid: i32,
+                kill_timeout: Option<std::time::Duration>,
+            }
+            let child_pid = unsafe {
+                let shadow: &PtyProcessShadow = std::mem::transmute(session.process());
+                shadow.child_pid as u32
+            };
+
+            let mut last_timeout_got_len = 0;
+
             // 메인 루프: interactive 팝업 감지 → 자동 응답 → EOF까지 반복
             loop {
                 // 전체 실행 시간 초과 검사
@@ -117,6 +130,8 @@ pub fn run_agy_with_pty(
                             let _ = file.flush();
                         }
 
+                        last_timeout_got_len = 0;
+
                         // 매칭된 패턴에 해당하는 응답 찾기
                         // matched_str에 패턴 키워드가 포함되는지로 간단히 판별
                         let response = AUTO_APPROVE_PATTERNS
@@ -142,21 +157,30 @@ pub fn run_agy_with_pty(
                         }
                     }
                     Err(rexpect::error::Error::EOF { got, .. }) => {
-                        output_buf.push_str(&got);
-                        if let Some(file) = log_file.as_mut() {
-                            let _ = write!(file, "{}", got);
-                            let _ = file.flush();
+                        if got.len() > last_timeout_got_len {
+                            let new_data = &got[last_timeout_got_len..];
+                            output_buf.push_str(new_data);
+                            if let Some(file) = log_file.as_mut() {
+                                let _ = write!(file, "{}", new_data);
+                                let _ = file.flush();
+                            }
                         }
                         // 정상 종료
                         break;
                     }
                     Err(rexpect::error::Error::Timeout { got, .. }) => {
-                        output_buf.push_str(&got);
-                        if let Some(file) = log_file.as_mut() {
-                            let _ = write!(file, "{}", got);
-                            let _ = file.flush();
+                        if got.len() > last_timeout_got_len {
+                            let new_data = &got[last_timeout_got_len..];
+                            output_buf.push_str(new_data);
+                            if let Some(file) = log_file.as_mut() {
+                                let _ = write!(file, "{}", new_data);
+                                let _ = file.flush();
+                            }
+                            last_timeout_got_len = got.len();
                         }
-                        // 단기 500ms 타임아웃 발생 시, 단순 출력 보존 후 루프 지속
+                        if !crate::backend::state::is_pid_alive(child_pid) {
+                            break;
+                        }
                     }
                     Err(_) => {
                         // 기타 오류
@@ -256,16 +280,19 @@ pub fn spawn_agy_background(
                     let shadow: &PtyProcessShadow = std::mem::transmute(session.process());
                     shadow.child_pid as u32
                 };
-                
+
                 let _ = tx.send(Ok(pid));
-                
-                // Now run the PTY interaction loop just like run_agy_with_pty
+
                 let overall_timeout = std::time::Duration::from_secs(timeout_secs.unwrap_or(600));
                 let start_time = std::time::Instant::now();
                 let mut output_buf = String::new();
                 let mut log_file = if let Some(ref path) = log_path {
                     let _ = std::fs::create_dir_all(path.parent().unwrap());
-                    std::fs::OpenOptions::new().create(true).append(true).open(path).ok()
+                    std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(path)
+                        .ok()
                 } else {
                     None
                 };
@@ -275,6 +302,8 @@ pub fn spawn_agy_background(
                     .map(|(p, _)| format!("({})", p))
                     .collect::<Vec<_>>()
                     .join("|");
+
+                let mut last_timeout_got_len = 0;
 
                 loop {
                     if start_time.elapsed() >= overall_timeout {
@@ -288,6 +317,8 @@ pub fn spawn_agy_background(
                                 let _ = write!(file, "{}{}", before, matched_str);
                                 let _ = file.flush();
                             }
+                            last_timeout_got_len = 0;
+
                             let response = AUTO_APPROVE_PATTERNS
                                 .iter()
                                 .find(|(p, _)| {
@@ -308,18 +339,28 @@ pub fn spawn_agy_background(
                             }
                         }
                         Err(rexpect::error::Error::EOF { got, .. }) => {
-                            output_buf.push_str(&got);
-                            if let Some(ref mut file) = log_file {
-                                let _ = write!(file, "{}", got);
-                                let _ = file.flush();
+                            if got.len() > last_timeout_got_len {
+                                let new_data = &got[last_timeout_got_len..];
+                                output_buf.push_str(new_data);
+                                if let Some(ref mut file) = log_file {
+                                    let _ = write!(file, "{}", new_data);
+                                    let _ = file.flush();
+                                }
                             }
                             break;
                         }
                         Err(rexpect::error::Error::Timeout { got, .. }) => {
-                            output_buf.push_str(&got);
-                            if let Some(ref mut file) = log_file {
-                                let _ = write!(file, "{}", got);
-                                let _ = file.flush();
+                            if got.len() > last_timeout_got_len {
+                                let new_data = &got[last_timeout_got_len..];
+                                output_buf.push_str(new_data);
+                                if let Some(ref mut file) = log_file {
+                                    let _ = write!(file, "{}", new_data);
+                                    let _ = file.flush();
+                                }
+                                last_timeout_got_len = got.len();
+                            }
+                            if !crate::backend::state::is_pid_alive(pid) {
+                                break;
                             }
                         }
                         Err(_) => {

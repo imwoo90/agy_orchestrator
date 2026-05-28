@@ -1,7 +1,7 @@
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::Path;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::Local;
 
@@ -19,6 +19,13 @@ const TOOL_FORMAT_INSTRUCTION: &str = "\n\n=====================================
      - Incorrect: \"AbsolutePath\": \"\\\"/path/to/file\\\"\"\n\
      Failure to follow this will cause sandbox permission validation to time out and fail!\n\
      ==================================================\n";
+
+const LOG_LINE_COMPRESSION_THRESHOLD: usize = 300;
+const MIN_CARGO_SKIP_COUNT: usize = 3;
+const MAX_TOOL_OUTPUT_LINES: usize = 60;
+const TOOL_OUTPUT_BOUNDARY_LINES: usize = 15;
+
+const DELEGATE_STOP_WORDS: &[&str] = &["this", "that", "with", "from", "for", "and", "the"];
 
 pub fn execute_compress(name: String) -> io::Result<CliResult> {
     let base_dir = get_base_dir();
@@ -97,6 +104,32 @@ pub fn execute_search_history(name: String, query: String) -> io::Result<CliResu
     Ok(CliResult::Exit)
 }
 
+struct SubagentPromptBuilder<'a> {
+    parent: &'a str,
+    project_path: &'a Path,
+    base_dir: &'a Path,
+    goal: &'a str,
+}
+
+impl<'a> SubagentPromptBuilder<'a> {
+    fn build(&self) -> String {
+        let agents_inject = get_parent_agents_injection(self.parent, self.project_path);
+        let parent_context_inject = get_parent_context_injection(self.project_path);
+        let report_instruction = get_report_instruction(&self.project_path.to_string_lossy());
+        let skills_inject = get_skills_injection(self.base_dir, self.goal);
+
+        format!(
+            "{}{}{}{}{}{}",
+            agents_inject,
+            parent_context_inject,
+            skills_inject,
+            self.goal,
+            report_instruction,
+            TOOL_FORMAT_INSTRUCTION
+        )
+    }
+}
+
 pub fn execute_delegate(parent: String, subtask: String, goal: String) -> io::Result<CliResult> {
     let mut state = load_state();
     let base_dir = get_base_dir();
@@ -106,31 +139,18 @@ pub fn execute_delegate(parent: String, subtask: String, goal: String) -> io::Re
     let project_path_str = parent_info.path.clone();
 
     // 2. Generate Prompt Components
-    let agents_inject = get_parent_agents_injection(&parent, Path::new(&project_path_str));
-    let parent_context_inject = get_parent_context_injection(Path::new(&project_path_str));
-    let report_instruction = get_report_instruction(&project_path_str);
-    let skills_inject = get_skills_injection(&base_dir, &goal);
-
-    let final_prompt = format!(
-        "{}{}{}{}{}{}",
-        agents_inject,
-        parent_context_inject,
-        skills_inject,
-        goal,
-        report_instruction,
-        TOOL_FORMAT_INSTRUCTION
-    );
+    let prompt_builder = SubagentPromptBuilder {
+        parent: &parent,
+        project_path: Path::new(&project_path_str),
+        base_dir: &base_dir,
+        goal: &goal,
+    };
+    let final_prompt = prompt_builder.build();
 
     // 3. Spawn Subagent & Update State
     let log_file_path = base_dir.join("logs").join(format!("{}.log", child_name));
-    let _child_pid = spawn_subagent_and_update_state(
-        &mut state,
-        &child_name,
-        &project_path_str,
-        &goal,
-        &final_prompt,
-        &log_file_path,
-    )?;
+    let child_pid = spawn_subagent(&project_path_str, &final_prompt, &log_file_path)?;
+    update_subagent_state(&mut state, &child_name, &project_path_str, &goal, child_pid)?;
 
     let log_display = log_file_path.canonicalize()
         .map(|p| p.to_string_lossy().into_owned())
@@ -224,6 +244,34 @@ fn get_report_instruction(project_path_str: &str) -> String {
     )
 }
 
+fn extract_goal_keywords(goal: &str) -> HashSet<String> {
+    let goal_lower = goal.to_lowercase();
+    goal_lower
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|s| s.len() >= 4)
+        .filter(|s| !DELEGATE_STOP_WORDS.contains(s))
+        .map(|s| s.to_string())
+        .collect()
+}
+
+fn parse_skill_metadata(content: &str) -> Option<(String, String)> {
+    let mut skill_name = String::new();
+    let mut skill_desc = String::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("name:") {
+            skill_name = trimmed.trim_start_matches("name:").trim().to_string();
+        } else if trimmed.starts_with("description:") {
+            skill_desc = trimmed.trim_start_matches("description:").trim().to_string();
+        }
+    }
+    if !skill_name.is_empty() {
+        Some((skill_name, skill_desc))
+    } else {
+        None
+    }
+}
+
 /// Searches the global skills directory for any skills matching keywords derived from the subtask goal.
 /// If matches are found, compiles them into a system instruction block.
 fn get_skills_injection(base_dir: &Path, goal: &str) -> String {
@@ -235,33 +283,18 @@ fn get_skills_injection(base_dir: &Path, goal: &str) -> String {
 
     let mut matched_skills = Vec::new();
     let goal_lower = goal.to_lowercase();
-    let keywords: std::collections::HashSet<String> = goal_lower
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|s| s.len() >= 4)
-        .map(|s| s.to_string())
-        .collect();
+    let keywords = extract_goal_keywords(goal);
 
     if let Ok(entries) = fs::read_dir(&skills_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().is_some_and(|ext| ext == "md") {
                 if let Ok(content) = fs::read_to_string(&path) {
-                    let mut skill_name = String::new();
-                    let mut skill_desc = String::new();
-                    for line in content.lines() {
-                        let trimmed = line.trim();
-                        if trimmed.starts_with("name:") {
-                            skill_name = trimmed.trim_start_matches("name:").trim().to_string();
-                        } else if trimmed.starts_with("description:") {
-                            skill_desc = trimmed.trim_start_matches("description:").trim().to_string();
-                        }
-                    }
-                    if !skill_name.is_empty() {
+                    if let Some((skill_name, skill_desc)) = parse_skill_metadata(&content) {
                         let skill_name_lower = skill_name.to_lowercase();
                         let skill_desc_lower = skill_desc.to_lowercase();
                         let is_match = keywords.iter().any(|kw| {
-                            kw != "this" && kw != "that" && kw != "with" && kw != "from" &&
-                            (skill_name_lower.contains(kw) || skill_desc_lower.contains(kw))
+                            skill_name_lower.contains(kw) || skill_desc_lower.contains(kw)
                         });
                         if is_match || goal_lower.contains(&skill_name_lower) {
                             matched_skills.push((skill_name, skill_desc));
@@ -294,12 +327,9 @@ fn get_skills_injection(base_dir: &Path, goal: &str) -> String {
     }
 }
 
-/// Spawns the sub-agent process in the background using `spawn_agy_background` and records the status in state.
-fn spawn_subagent_and_update_state(
-    state: &mut HashMap<String, ProjectInfo>,
-    child_name: &str,
+/// Spawns the sub-agent process in the background using `spawn_agy_background`.
+fn spawn_subagent(
     project_path: &str,
-    goal: &str,
     final_prompt: &str,
     log_file_path: &Path,
 ) -> io::Result<u32> {
@@ -314,12 +344,21 @@ fn spawn_subagent_and_update_state(
         final_prompt.to_string(),
     ];
 
-    let child_pid = crate::backend::agy_runner::spawn_agy_background(
+    crate::backend::agy_runner::spawn_agy_background(
         agy_args,
         Some(log_file_path.to_path_buf()),
         None, // 기본 타임아웃 10분
-    )?;
+    )
+}
 
+/// Records the spawned sub-agent status in state.
+fn update_subagent_state(
+    state: &mut HashMap<String, ProjectInfo>,
+    child_name: &str,
+    project_path: &str,
+    goal: &str,
+    child_pid: u32,
+) -> io::Result<()> {
     state.insert(
         child_name.to_string(),
         ProjectInfo {
@@ -331,13 +370,120 @@ fn spawn_subagent_and_update_state(
         },
     );
     save_state(state)?;
-
-    Ok(child_pid)
+    Ok(())
 }
 
 pub fn execute_info() -> io::Result<CliResult> {
     print_info()?;
     Ok(CliResult::Exit)
+}
+
+fn is_cargo_log(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.starts_with("Compiling ") || trimmed.starts_with("Checking ") || trimmed.contains("Downloading ")
+}
+
+fn skip_cargo_logs(lines: &[&str], current_index: usize) -> (usize, Option<&'static str>) {
+    let mut skip_count = 0;
+    while current_index + skip_count < lines.len() {
+        if is_cargo_log(lines[current_index + skip_count]) {
+            skip_count += 1;
+        } else {
+            break;
+        }
+    }
+    if skip_count > MIN_CARGO_SKIP_COUNT {
+        (skip_count, Some("[... Rust cargo dependency checking/compiling logs compressed ...]"))
+    } else {
+        (0, None)
+    }
+}
+
+fn is_tool_block_start(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.starts_with("[diff_block_start]") || (trimmed.contains("Showing lines ") && trimmed.contains(" of "))
+}
+
+fn is_tool_block_end(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.starts_with("[diff_block_end]") || trimmed.contains("The above content shows the entire") || trimmed.contains("The above content does NOT show")
+}
+
+fn compress_tool_block(lines: &[&str], current_index: usize) -> (usize, Vec<String>) {
+    let mut block_lines = Vec::new();
+    let mut idx = current_index;
+    let mut closed = false;
+    
+    while idx < lines.len() {
+        let line = lines[idx];
+        block_lines.push(line.to_string());
+        if is_tool_block_end(line) {
+            closed = true;
+            idx += 1;
+            break;
+        }
+        idx += 1;
+    }
+    
+    if closed {
+        let mut result = Vec::new();
+        if block_lines.len() > MAX_TOOL_OUTPUT_LINES {
+            for line in block_lines.iter().take(TOOL_OUTPUT_BOUNDARY_LINES) {
+                result.push(line.clone());
+            }
+            result.push("[... (Tool output content truncated and compressed to optimize token usages) ...]".to_string());
+            let len = block_lines.len();
+            for line in block_lines.iter().skip(len - TOOL_OUTPUT_BOUNDARY_LINES) {
+                result.push(line.clone());
+            }
+        } else {
+            result = block_lines;
+        }
+        (idx - current_index, result)
+    } else {
+        (idx - current_index, Vec::new())
+    }
+}
+
+pub fn compress_log_content(content: &str) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+    if lines.len() < LOG_LINE_COMPRESSION_THRESHOLD {
+        return content.to_string();
+    }
+
+    let mut compressed_lines = Vec::new();
+    let mut i = 0;
+    
+    while i < lines.len() {
+        let line = lines[i];
+        if is_cargo_log(line) {
+            let (skip_count, msg) = skip_cargo_logs(&lines, i);
+            if let Some(compressed_msg) = msg {
+                compressed_lines.push(compressed_msg.to_string());
+                i += skip_count;
+            } else {
+                compressed_lines.push(line.to_string());
+                i += 1;
+            }
+            continue;
+        }
+
+        if is_tool_block_start(line) {
+            let (skip_count, block) = compress_tool_block(&lines, i);
+            compressed_lines.extend(block);
+            i += skip_count;
+            continue;
+        }
+
+        compressed_lines.push(line.to_string());
+        i += 1;
+    }
+
+    let mut output = compressed_lines.join("\n");
+    if !output.is_empty() {
+        output.push('\n');
+    }
+    output
 }
 
 #[allow(clippy::needless_range_loop)]
@@ -347,79 +493,11 @@ pub fn compress_log_file(log_path: &std::path::Path) -> io::Result<()> {
     }
     
     let content = fs::read_to_string(log_path)?;
-    let lines: Vec<&str> = content.lines().collect();
+    let compressed = compress_log_content(&content);
     
-    if lines.len() < 300 {
-        return Ok(());
-    }
-
-    let mut compressed_lines = Vec::new();
-    let mut i = 0;
-    let mut in_long_block = false;
-    let mut block_lines = Vec::new();
-    
-    while i < lines.len() {
-        let line = lines[i];
-        let trimmed = line.trim();
-        
-        if trimmed.starts_with("Compiling ") || trimmed.starts_with("Checking ") || trimmed.contains("Downloading ") {
-            let mut skip_count = 0;
-            while i + skip_count < lines.len() {
-                let next_line = lines[i + skip_count].trim();
-                if next_line.starts_with("Compiling ") || next_line.starts_with("Checking ") || next_line.contains("Downloading ") {
-                    skip_count += 1;
-                } else {
-                    break;
-                }
-            }
-            if skip_count > 3 {
-                compressed_lines.push("[... Rust cargo dependency checking/compiling logs compressed ...]");
-                i += skip_count - 1;
-            } else {
-                compressed_lines.push(line);
-            }
-            i += 1;
-            continue;
-        }
-
-        if trimmed.starts_with("[diff_block_start]") || (trimmed.contains("Showing lines ") && trimmed.contains(" of ")) {
-            in_long_block = true;
-            block_lines.clear();
-            block_lines.push(line);
-            i += 1;
-            continue;
-        }
-
-        if in_long_block {
-            block_lines.push(line);
-            if trimmed.starts_with("[diff_block_end]") || trimmed.contains("The above content shows the entire") || trimmed.contains("The above content does NOT show") {
-                in_long_block = false;
-                if block_lines.len() > 60 {
-                    for j in 0..15 {
-                        compressed_lines.push(block_lines[j]);
-                    }
-                    compressed_lines.push("[... (Tool output content truncated and compressed to optimize token usages) ...]");
-                    let len = block_lines.len();
-                    for j in (len - 15)..len {
-                        compressed_lines.push(block_lines[j]);
-                    }
-                } else {
-                    for bl in &block_lines {
-                        compressed_lines.push(*bl);
-                    }
-                }
-            }
-            i += 1;
-            continue;
-        }
-
-        compressed_lines.push(line);
-        i += 1;
-    }
-
-    let mut file = File::create(log_path)?;
-    for cl in compressed_lines {
-        writeln!(file, "{}", cl)?;
+    if compressed != content {
+        let mut file = File::create(log_path)?;
+        write!(file, "{}", compressed)?;
     }
     
     Ok(())
@@ -510,4 +588,83 @@ pub fn print_info() -> io::Result<()> {
     println!("==================================================");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compress_log_content_small() {
+        let content = "Hello World\nLine 2\n";
+        assert_eq!(compress_log_content(content), content);
+    }
+
+    #[test]
+    fn test_compress_log_content_cargo() {
+        let mut content = String::new();
+        for i in 0..100 {
+            content.push_str(&format!("Line {}\n", i));
+        }
+        content.push_str("   Compiling dep1 v0.1.0\n");
+        content.push_str("   Compiling dep2 v0.1.0\n");
+        content.push_str("   Checking dep3 v0.1.0\n");
+        content.push_str("   Compiling dep4 v0.1.0\n");
+        content.push_str(" Downloading dep5 v0.1.0\n");
+        
+        for i in 100..300 {
+            content.push_str(&format!("Line {}\n", i));
+        }
+
+        let compressed = compress_log_content(&content);
+        assert!(compressed.contains("[... Rust cargo dependency checking/compiling logs compressed ...]"));
+        assert!(!compressed.contains("Compiling dep1"));
+    }
+
+    #[test]
+    fn test_compress_log_content_tool_block() {
+        let mut content = String::new();
+        for i in 0..100 {
+            content.push_str(&format!("Line {}\n", i));
+        }
+        content.push_str("[diff_block_start]\n");
+        for i in 0..70 {
+            content.push_str(&format!("tool block line {}\n", i));
+        }
+        content.push_str("[diff_block_end]\n");
+        
+        for i in 100..300 {
+            content.push_str(&format!("Line {}\n", i));
+        }
+
+        let compressed = compress_log_content(&content);
+        assert!(compressed.contains("[... (Tool output content truncated and compressed to optimize token usages) ...]"));
+        assert!(compressed.contains("tool block line 0\n"));
+        assert!(compressed.contains("tool block line 13\n"));
+        assert!(!compressed.contains("tool block line 14\n"));
+        assert!(compressed.contains("tool block line 69\n"));
+    }
+
+    #[test]
+    fn test_extract_goal_keywords() {
+        let goal = "implement test suite for the server functions with rust_testing skill";
+        let keywords = extract_goal_keywords(goal);
+        assert!(keywords.contains("implement"));
+        assert!(keywords.contains("suite"));
+        assert!(keywords.contains("server"));
+        assert!(keywords.contains("functions"));
+        assert!(keywords.contains("rust"));
+        assert!(keywords.contains("testing"));
+        assert!(keywords.contains("skill"));
+        assert!(!keywords.contains("for"));
+        assert!(!keywords.contains("the"));
+        assert!(!keywords.contains("with"));
+    }
+
+    #[test]
+    fn test_parse_skill_metadata() {
+        let content = "name: rust_testing\ndescription: standard procedure for running tests\nother field\n";
+        let metadata = parse_skill_metadata(content);
+        assert_eq!(metadata, Some(("rust_testing".to_string(), "standard procedure for running tests".to_string())));
+    }
 }
