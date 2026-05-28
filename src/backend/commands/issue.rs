@@ -176,6 +176,7 @@ mod tests {
 
     #[test]
     fn test_handle_resolve_success() {
+        let _lock = crate::backend::vault::TEST_MUTEX.lock().unwrap();
         let (_test_home, mut issues) = setup_test_env();
         let res = handle_resolve(&mut issues, 1);
         assert!(res.is_ok());
@@ -185,6 +186,7 @@ mod tests {
 
     #[test]
     fn test_handle_resolve_not_found() {
+        let _lock = crate::backend::vault::TEST_MUTEX.lock().unwrap();
         let (_test_home, mut issues) = setup_test_env();
         let res = handle_resolve(&mut issues, 99);
         assert!(res.is_err());

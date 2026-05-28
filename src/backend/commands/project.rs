@@ -486,6 +486,7 @@ More info.
 
     #[test]
     fn test_execute_status_not_found() {
+        let _lock = crate::backend::vault::TEST_MUTEX.lock().unwrap();
         let test_home = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("target")
             .join("test_home_project_status_not_found");

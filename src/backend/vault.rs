@@ -119,3 +119,7 @@ pub fn bootstrap_if_needed() -> io::Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+pub static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+

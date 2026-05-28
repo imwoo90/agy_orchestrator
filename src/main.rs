@@ -46,7 +46,11 @@ fn main() -> std::io::Result<()> {
             .and_then(|exe| exe.parent().map(|p| p.join("public")));
         let has_exe_public = exe_public.as_ref().map(|p| p.exists()).unwrap_or(false);
 
-        if !has_exe_public {
+        if has_exe_public {
+            if let Some(ref pub_path) = exe_public {
+                std::env::set_var("DIOXUS_PUBLIC_PATH", pub_path);
+            }
+        } else {
             std::env::remove_var("CARGO_MANIFEST_DIR");
             std::env::set_var("DIOXUS_CLI_ENABLED", "true");
             if std::env::var("DIOXUS_PUBLIC_PATH").is_err() {
@@ -68,7 +72,6 @@ fn main() -> std::io::Result<()> {
                     }
                 }
             }
-
         }
 
         // Always copy tailwind.css to target public assets directories if workspace root is available

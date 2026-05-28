@@ -210,6 +210,7 @@ mod tests {
 
     #[test]
     fn test_health_checks_skips_running_projects() {
+        let _lock = crate::backend::vault::TEST_MUTEX.lock().unwrap();
         // Setup a temporary directory for HOME
         let temp_dir = std::env::temp_dir().join(format!(
             "agy_test_{}",

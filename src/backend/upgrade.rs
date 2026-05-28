@@ -26,7 +26,7 @@ pub fn get_active_current_exe() -> io::Result<PathBuf> {
 }
 
 pub fn restart_dashboard_process(current_exe: &Path) -> io::Result<()> {
-    let mut dashboard_pid = None;
+    let mut dashboard_pids = Vec::new();
     let mut port = 8080;
 
     if let Ok(entries) = std::fs::read_dir("/proc") {
@@ -39,7 +39,7 @@ pub fn restart_dashboard_process(current_exe: &Path) -> io::Result<()> {
                     if let Ok(cmdline) = std::fs::read_to_string(&cmdline_path) {
                         if cmdline.contains("dashboard") && (cmdline.contains("agy-orchestrator") || cmdline.contains("server")) {
                             if let Ok(pid) = name_str.parse::<u32>() {
-                                dashboard_pid = Some(pid);
+                                dashboard_pids.push(pid);
                                 let parts: Vec<&str> = cmdline.split('\0').collect();
                                 for (i, part) in parts.iter().enumerate() {
                                     if (*part == "--port" || *part == "-p") && i + 1 < parts.len() {
@@ -48,7 +48,6 @@ pub fn restart_dashboard_process(current_exe: &Path) -> io::Result<()> {
                                         }
                                     }
                                 }
-                                break;
                             }
                         }
                     }
@@ -57,15 +56,20 @@ pub fn restart_dashboard_process(current_exe: &Path) -> io::Result<()> {
         }
     }
 
-    if let Some(pid) = dashboard_pid {
+    let mut killed_any = false;
+    for pid in dashboard_pids {
         if pid == std::process::id() {
             println!("Target dashboard PID {} matches current process. Skipping self-kill to allow graceful deferral.", pid);
-            return Ok(());
+            continue;
         }
         println!("Stopping running dashboard (PID: {})...", pid);
         let _ = Command::new("kill").arg(pid.to_string()).status();
+        killed_any = true;
+    }
+    if killed_any {
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
+
 
     println!("Starting upgraded dashboard on port {}...", port);
     let mut cmd = Command::new(current_exe);
