@@ -645,3 +645,32 @@ None
 ## 4. CRITICAL ITEMS FOR REVIEW
 None
 
+
+
+# 📅 History log from 2026-05-29 08:44:53 (Spawned at 2026-05-25T23:15:48+09:00)
+
+# Subtask Report: Fixed Bubble Tea Terminal Capability Query Hang in PTY Sessions
+
+## 1. Summary of Completed Tasks
+- **Diagnostics Check**: Executed git status, diff, system architecture checks, static instructions loader, and loaded the context file.
+- **Root Cause Identified**: Go's Bubble Tea TUI framework inside the `agy` CLI queries Mode 2026 (synchronized output), Mode 2027 (grapheme clustering), and Kitty keyboard protocol support on startup when launched in interactive terminal modes. Since the daemon spawns `agy` in a headless PTY via `rexpect` but doesn't emulate terminal capability responses, the process blocked indefinitely on `stdin` waiting for queries to be answered. Furthermore, without a non-zero terminal window size (width/height), the TUI fails to render its REPL prompts (`>`).
+- **Resolved Bubble Tea Query Hang**:
+  - Implemented a `Winsize` structure mapping and configured the PTY window size using the standard `ioctl(TIOCSWINSZ)` system call immediately after spawning `agy` in PTY sessions.
+  - Modified the REPL initial handshake loop inside `src/backend/agy_runner.rs` to intercept the ANSI escape sequences `\x1b[?2026$p`, `\x1b[?2027$p`, and `\x1b[?u`.
+  - Configured the PTY runner to reply instantly with the standard DEC Private Mode Report "not-supported" formats (`\x1b[?2026;0$y`, `\x1b[?2027;0$y`, and `\x1b[?0u`) to unblock the process.
+- **Improved Testing Utilities**:
+  - Structured `src/bin/test_pty.rs` to serve as a conditional test runner utility, validating PTY window resizing and query mocking under different environment contexts.
+- **Validation & Deployment**:
+  - Ran cargo check, test, clippy, and the safety evolution harness. All checks passed successfully.
+  - Successfully ran `self-upgrade` to hot-reload/redeploy the upgraded daemon and dashboard services.
+
+## 2. Crucial Design/Architectural Choices Made
+- **PTY Window Size Allocation**: Initializing the PTY with a standard 80x24 window size via `ioctl` ensures Bubble Tea's render engine has a valid viewport geometry to output structural text frames.
+- **Instant Capability Interception**: Adding DEC mode queries directly into the `combined_pattern` regex of the spawner's initialization match loop allows the orchestrator to respond and unblock `agy` startup without modifying the client binary itself.
+
+## 3. Minor Choices Resolved Autonomously
+- Changed the default environment variable `TERM` from `dumb` to `xterm-256color` in interactive sessions to guarantee standard terminal color sequences are processed correctly.
+
+## 4. CRITICAL ITEMS FOR REVIEW
+None
+
