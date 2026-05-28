@@ -17,6 +17,30 @@ pub use server_fns::*;
 fn main() -> std::io::Result<()> {
     #[cfg(not(target_arch = "wasm32"))]
     {
+        // Ensure standard cargo and local binary paths are present in PATH for background services and tools.
+        if let Ok(current_path) = std::env::var("PATH") {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/home/wimvm".to_string());
+            let cargo_bin = format!("{}/.cargo/bin", home);
+            let local_bin = format!("{}/.local/bin", home);
+            let cargo_path = std::path::PathBuf::from(&cargo_bin);
+            let local_path = std::path::PathBuf::from(&local_bin);
+            let mut paths = std::env::split_paths(&current_path).collect::<Vec<_>>();
+            let mut updated = false;
+            if !paths.contains(&cargo_path) {
+                paths.push(cargo_path);
+                updated = true;
+            }
+            if !paths.contains(&local_path) {
+                paths.push(local_path);
+                updated = true;
+            }
+            if updated {
+                if let Ok(new_path) = std::env::join_paths(paths) {
+                    std::env::set_var("PATH", new_path);
+                }
+            }
+        }
+
         // Setup DIOXUS_PUBLIC_PATH to find the correct asset path in development or build mode.
         let exe_public = std::env::current_exe().ok()
             .and_then(|exe| exe.parent().map(|p| p.join("public")));
