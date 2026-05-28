@@ -17,7 +17,7 @@ gloo-timers = { version = "0.3", features = ["futures"] }
 getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [features]
-default = ["web"]
+default = []
 web = ["dioxus/web"]
 server = ["dioxus/server", "dep:tokio", "dep:rexpect"]
 

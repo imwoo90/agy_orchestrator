@@ -8,6 +8,43 @@
 use std::io;
 #[cfg(feature = "server")]
 use std::io::Write;
+#[cfg(feature = "server")]
+use std::os::fd::AsRawFd;
+
+#[cfg(feature = "server")]
+#[repr(C)]
+struct Winsize {
+    ws_row: u16,
+    ws_col: u16,
+    ws_xpixel: u16,
+    ws_ypixel: u16,
+}
+
+#[cfg(feature = "server")]
+extern "C" {
+    fn ioctl(fd: std::os::raw::c_int, request: std::os::raw::c_ulong, ...) -> std::os::raw::c_int;
+}
+
+#[cfg(feature = "server")]
+fn set_winsize(session: &rexpect::session::PtySession) {
+    #[allow(dead_code)]
+    struct PtyProcessShadow {
+        pty: std::os::fd::OwnedFd,
+        child_pid: i32,
+        kill_timeout: Option<std::time::Duration>,
+    }
+    unsafe {
+        let shadow: &PtyProcessShadow = std::mem::transmute(session.process());
+        let fd = shadow.pty.as_raw_fd();
+        let w = Winsize {
+            ws_row: 24,
+            ws_col: 80,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        ioctl(fd, 0x5414, &w);
+    }
+}
 
 /// agy 프로세스 실행 결과
 pub struct AgyOutput {
@@ -451,9 +488,12 @@ pub fn get_or_create_persistent_session(conversation_id: &str) -> io::Result<u32
         }
         cmd.arg("--conversation");
         cmd.arg(conversation_id);
+        cmd.env("TERM", "xterm-256color");
         
-        let mut session = rexpect::session::spawn_command(cmd, Some(600_000))
+        let mut session = rexpect::session::spawn_command(cmd, Some(30000))
             .map_err(|e| io::Error::other(e.to_string()))?;
+            
+        set_winsize(&session);
             
         #[allow(dead_code)]
         struct PtyProcessShadow {
@@ -466,22 +506,37 @@ pub fn get_or_create_persistent_session(conversation_id: &str) -> io::Result<u32
             shadow.child_pid as u32
         };
         
-        const REPL_PROMPT_PATTERN: &str = r"(\x1b\[94m>\x1b\[m|(?:\r\n|\n)>\r\n)";
+        const REPL_PROMPT_PATTERN: &str = r"(\x1b\[94m>\x1b\[m|(?:\r\n|\n)>\s*)";
+        const CAP_QUERY_2026: &str = r"\x1b\[\?2026\$p";
+        const CAP_QUERY_2027: &str = r"\x1b\[\?2027\$p";
+        const CAP_QUERY_KITTY: &str = r"\x1b\[\?u";
+        
         let combined_pattern = format!(
-            "({})|({})",
+            "({})|({})|({})|({})|({})",
             AUTO_APPROVE_PATTERNS.iter().map(|(p, _)| format!("({})", p)).collect::<Vec<_>>().join("|"),
-            REPL_PROMPT_PATTERN
+            REPL_PROMPT_PATTERN,
+            CAP_QUERY_2026,
+            CAP_QUERY_2027,
+            CAP_QUERY_KITTY
         );
         
         loop {
             match session.exp_regex(&combined_pattern) {
                 Ok((_, matched)) => {
-                    let is_repl_prompt = matched.contains('>') && (matched.contains('\n') || matched.contains("\x1b[94m"));
-                    if is_repl_prompt {
-                        break;
+                    if matched.contains("\x1b[?2026$p") {
+                        let _ = session.send("\x1b[?2026;0$y");
+                    } else if matched.contains("\x1b[?2027$p") {
+                        let _ = session.send("\x1b[?2027;0$y");
+                    } else if matched.contains("\x1b[?u") {
+                        let _ = session.send("\x1b[?0u");
                     } else {
-                        let response = find_auto_approve_response(&matched);
-                        let _ = session.send_line(response);
+                        let is_repl_prompt = matched.contains('>') && (matched.contains('\n') || matched.contains("\x1b[94m"));
+                        if is_repl_prompt {
+                            break;
+                        } else {
+                            let response = find_auto_approve_response(&matched);
+                            let _ = session.send_line(response);
+                        }
                     }
                 }
                 Err(e) => return Err(io::Error::other(format!("Failed to reach initial REPL prompt: {}", e))),
@@ -518,7 +573,7 @@ pub fn send_interactive_message(
 
     active.session.send_line(prompt).map_err(|e| io::Error::other(e.to_string()))?;
     
-    const REPL_PROMPT_PATTERN: &str = r"(\x1b\[94m>\x1b\[m|(?:\r\n|\n)>\r\n)";
+    const REPL_PROMPT_PATTERN: &str = r"(\x1b\[94m>\x1b\[m|(?:\r\n|\n)>\s*)";
     let combined_pattern = format!(
         "({})|({})",
         AUTO_APPROVE_PATTERNS.iter().map(|(p, _)| format!("({})", p)).collect::<Vec<_>>().join("|"),
