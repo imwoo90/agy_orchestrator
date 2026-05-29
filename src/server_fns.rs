@@ -24,9 +24,20 @@ use crate::backend::chat_session::{
     find_parent_brain_session,
 };
 
-#[cfg(not(target_arch = "wasm32"))]
 #[allow(dead_code)]
 static DRAFT_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
+struct HistoryCacheEntry {
+    modified: std::time::SystemTime,
+    file_size: u64,
+    history: Vec<ChatMessage>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
+static HISTORY_CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<String, HistoryCacheEntry>>> = std::sync::OnceLock::new();
 
 #[cfg(not(target_arch = "wasm32"))]
 #[allow(dead_code)]
@@ -314,6 +325,20 @@ pub async fn get_chat_history(session_id: String) -> Result<Vec<ChatMessage>, Se
             return Ok(Vec::new());
         }
 
+        let metadata = std::fs::metadata(&transcript_path)
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        let modified = metadata.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        let file_size = metadata.len();
+
+        let cache = HISTORY_CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+        if let Ok(lock) = cache.lock() {
+            if let Some(entry) = lock.get(&resolved_id) {
+                if entry.modified == modified && entry.file_size == file_size {
+                    return Ok(entry.history.clone());
+                }
+            }
+        }
+
         let file_content = std::fs::read_to_string(&transcript_path)
             .map_err(|e| ServerFnError::new(e.to_string()))?;
 
@@ -453,6 +478,13 @@ pub async fn get_chat_history(session_id: String) -> Result<Vec<ChatMessage>, Se
                     }
                 }
             }
+        }
+        if let Ok(mut lock) = cache.lock() {
+            lock.insert(resolved_id, HistoryCacheEntry {
+                modified,
+                file_size,
+                history: history.clone(),
+            });
         }
         Ok(history)
     }
@@ -707,6 +739,14 @@ pub async fn send_chat_message(session_id: String, message: String) -> Result<Ch
         }
 
         let actual_session_id = promote_session_if_draft(&session_id);
+        
+        if backend::agy_runner::is_session_busy(&actual_session_id) {
+            return Ok(ChatResponse {
+                reply: "⚠️ The orchestrator is currently processing a task. Please wait until the active task is completed.".to_string(),
+                actual_session_id,
+            });
+        }
+
         let lower_msg = msg_trimmed.to_lowercase();
 
         // Short-circuit: direct agy-orchestrator commands execution
@@ -828,9 +868,15 @@ pub async fn send_chat_message(session_id: String, message: String) -> Result<Ch
             });
         }
 
+        let transcript_path = backend::vault::get_brain_dir()
+            .join(&actual_session_id)
+            .join(".system_generated/logs/transcript_full.jsonl");
+        let is_first_turn = !transcript_path.exists()
+            || std::fs::metadata(&transcript_path).map(|m| m.len()).unwrap_or(0) == 0;
+
         let prompt_payload = if msg_trimmed.starts_with('/') {
             msg_trimmed.to_string()
-        } else {
+        } else if is_first_turn {
             // Check if simple chat
             let is_simple_chat = {
                 let lower = msg_trimmed.to_lowercase();
@@ -866,29 +912,10 @@ pub async fn send_chat_message(session_id: String, message: String) -> Result<Ch
             let system_instruction = if is_simple_chat {
                 "You are a friendly personal secretary AI assistant. Respond to the user's message directly, briefly, and instantly in the same language. Do not plan, do not write code, and do not use tools.".to_string()
             } else {
-                let global_instr_path = backend::vault::get_base_dir().join("memory/system_instructions.md");
-                let global_instr = std::fs::read_to_string(global_instr_path).unwrap_or_default();
-                format!(
-                    "You are the Central Orchestrator (Personal Secretary) AI assistant for the user, communicating through the dashboard chat interface.\n\
-                    To answer the user's questions or perform their requests, you should retrieve knowledge and status in a Just-in-Time (JIT) manner by running terminal commands using your run_command tool.\n\n\
-                    Here are the primary commands you can execute to query the orchestrator's state JIT:\n\
-                    - `/home/wimvm/.local/bin/agy-orchestrator info` to get the system, daemon, and dashboard status.\n\
-                    - `/home/wimvm/.local/bin/agy-orchestrator list` to get the list of registered projects.\n\
-                    - `/home/wimvm/.local/bin/agy-orchestrator get-context --name <project>` to get the path, goal, and status of a specific project.\n\
-                    - `/home/wimvm/.local/bin/agy-orchestrator issue --list` to get the current list of evolution tasks and issues.\n\
-                    - `/home/wimvm/.local/bin/agy-orchestrator query-memory --query \"<keywords>\"` to find user preferences or design guidelines in the memory vault.\n\n\
-                    If the user asks to create or register a task, you can do so by running:\n\
-                    - `/home/wimvm/.local/bin/agy-orchestrator issue --create \"<Title>\" --body \"<Description>\"`\n\
-                    (Alternatively, you can append `[CREATE_TASK: Title | Body]` at the very end of your final response text, and the system will automatically parse and register it for you).\n\n\
-                    To delegate large tasks to subagents, always use your platform tools:\n\
-                    - `define_subagent` to define a new specialized subagent role.\n\
-                    - `invoke_subagent` to launch the subagent and pass the isolated task.\n\n\
-                    CRITICAL: If the user is just saying hello, greeting you, testing the chat, or asking simple questions that do not require orchestrator status, DO NOT write implementation plans, DO NOT write task lists, and DO NOT run any tools. Just answer directly and instantly in a conversational manner.\n\
-                    Only run JIT commands if they specifically ask for system status, projects list, or issue management. Do not guess status.\n\n\
-                    --- GLOBAL OPERATIONAL GUIDELINES ---\n\
-                    {}",
-                    global_instr
-                )
+                "You are the Central Orchestrator (Personal Secretary) AI assistant. \
+                CRITICAL FIRST STEP: You must immediately read your system guidelines and operational commands from the local file \
+                '/home/wimvm/.agy_orchestrator/memory/system_instructions.md' using your view_file tool to understand your specialized role, commands, and rules. \
+                Then, process the user's message accordingly.".to_string()
             };
 
             let tool_format_instruction = "\n\n==================================================\n\
@@ -906,7 +933,12 @@ Failure to follow this will cause sandbox permission validation to time out and 
                 msg_trimmed,
                 tool_format_instruction
             )
+        } else {
+            msg_trimmed.to_string()
         };
+
+        // Replace newlines with spaces to avoid PTY command line separation/race issues.
+        let prompt_payload = prompt_payload.replace("\r\n", " ").replace("\n", " ");
 
         if session_id != actual_session_id {
             let old_dir = backend::vault::get_brain_dir().join(&session_id);

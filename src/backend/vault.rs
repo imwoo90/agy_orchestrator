@@ -122,4 +122,6 @@ pub fn bootstrap_if_needed() -> io::Result<()> {
 #[cfg(test)]
 pub static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+// Trigger rebuild to reload system instructions template
+
 

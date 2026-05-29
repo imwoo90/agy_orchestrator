@@ -506,6 +506,10 @@ pub fn get_or_create_persistent_session(conversation_id: &str) -> io::Result<u32
             shadow.child_pid as u32
         };
         
+        // Wait for "Antigravity CLI" startup logo/text to ensure process is initialized
+        // and doesn't swallow early inputs during Signing in... network wait.
+        let _ = session.exp_string("Antigravity CLI");
+        
         const REPL_PROMPT_PATTERN: &str = r"(\x1b\[94m>\x1b\[m|(?:\r\n|\n)>\s*|>\s*)";
         const CAP_QUERY_2026: &str = r"\x1b\[\?2026\$p";
         const CAP_QUERY_2027: &str = r"\x1b\[\?2027\$p";
@@ -571,7 +575,15 @@ pub fn send_interactive_message(
         None
     };
 
-    active.session.send_line(prompt).map_err(|e| io::Error::other(e.to_string()))?;
+    // Send input message slowly in chunks to prevent PTY input buffer overflow / drops
+    let bytes = prompt.as_bytes();
+    for chunk in bytes.chunks(256) {
+        if let Ok(chunk_str) = std::str::from_utf8(chunk) {
+            active.session.send(chunk_str).map_err(|e| io::Error::other(e.to_string()))?;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(15));
+    }
+    active.session.send("\n").map_err(|e| io::Error::other(e.to_string()))?;
     
     const REPL_PROMPT_PATTERN: &str = r"(\x1b\[94m>\x1b\[m|(?:\r\n|\n)>\s*|>\s*)";
     let combined_pattern = format!(

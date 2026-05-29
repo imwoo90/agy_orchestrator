@@ -433,7 +433,7 @@ pub fn ChatTab(
                     
                     spawn(async move {
                         // Sleep a bit to let the backend mark it busy
-                        sleep_ms(800).await;
+                        sleep_ms(100).await;
                         
                         let mut is_busy = true;
                         while is_busy {
