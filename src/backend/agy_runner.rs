@@ -506,7 +506,7 @@ pub fn get_or_create_persistent_session(conversation_id: &str) -> io::Result<u32
             shadow.child_pid as u32
         };
         
-        const REPL_PROMPT_PATTERN: &str = r"(\x1b\[94m>\x1b\[m|(?:\r\n|\n)>\s*)";
+        const REPL_PROMPT_PATTERN: &str = r"(\x1b\[94m>\x1b\[m|(?:\r\n|\n)>\s*|>\s*)";
         const CAP_QUERY_2026: &str = r"\x1b\[\?2026\$p";
         const CAP_QUERY_2027: &str = r"\x1b\[\?2027\$p";
         const CAP_QUERY_KITTY: &str = r"\x1b\[\?u";
@@ -530,7 +530,7 @@ pub fn get_or_create_persistent_session(conversation_id: &str) -> io::Result<u32
                     } else if matched.contains("\x1b[?u") {
                         let _ = session.send("\x1b[?0u");
                     } else {
-                        let is_repl_prompt = matched.contains('>') && (matched.contains('\n') || matched.contains("\x1b[94m"));
+                        let is_repl_prompt = matched.contains('>');
                         if is_repl_prompt {
                             break;
                         } else {
@@ -573,7 +573,7 @@ pub fn send_interactive_message(
 
     active.session.send_line(prompt).map_err(|e| io::Error::other(e.to_string()))?;
     
-    const REPL_PROMPT_PATTERN: &str = r"(\x1b\[94m>\x1b\[m|(?:\r\n|\n)>\s*)";
+    const REPL_PROMPT_PATTERN: &str = r"(\x1b\[94m>\x1b\[m|(?:\r\n|\n)>\s*|>\s*)";
     let combined_pattern = format!(
         "({})|({})",
         AUTO_APPROVE_PATTERNS.iter().map(|(p, _)| format!("({})", p)).collect::<Vec<_>>().join("|"),
@@ -590,7 +590,7 @@ pub fn send_interactive_message(
                     let _ = file.flush();
                 }
                 
-                let is_repl_prompt = matched.contains('>') && (matched.contains('\n') || matched.contains("\x1b[94m"));
+                let is_repl_prompt = matched.contains('>');
                 if is_repl_prompt {
                     break;
                 } else {
