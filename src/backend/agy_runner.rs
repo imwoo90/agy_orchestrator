@@ -663,3 +663,35 @@ pub fn send_interactive_message(
 
 #[cfg(not(feature = "server"))]
 pub fn terminate_persistent_session(_conversation_id: &str) {}
+
+#[cfg(feature = "server")]
+pub static BUSY_SESSIONS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::OnceLock::new();
+
+#[cfg(feature = "server")]
+pub fn is_session_busy(conversation_id: &str) -> bool {
+    if let Ok(lock) = BUSY_SESSIONS.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new())).lock() {
+        lock.contains(conversation_id)
+    } else {
+        false
+    }
+}
+
+#[cfg(feature = "server")]
+pub fn set_session_busy(conversation_id: &str, busy: bool) {
+    if let Ok(mut lock) = BUSY_SESSIONS.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new())).lock() {
+        if busy {
+            lock.insert(conversation_id.to_string());
+        } else {
+            lock.remove(conversation_id);
+        }
+    }
+}
+
+#[cfg(not(feature = "server"))]
+pub fn is_session_busy(_conversation_id: &str) -> bool {
+    false
+}
+
+#[cfg(not(feature = "server"))]
+pub fn set_session_busy(_conversation_id: &str, _busy: bool) {}
+

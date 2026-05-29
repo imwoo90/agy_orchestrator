@@ -392,38 +392,10 @@ pub fn ChatTab(
 
         let mut msg_list = messages;
         let mut loading = is_loading;
-        let mut issues_sig = issues;
-        let mut chat_sessions_sig = chat_sessions;
+        let issues_sig = issues;
+        let chat_sessions_sig = chat_sessions;
         let active_id_spawn = active_id.clone();
         let mut active_session_id_ref = active_session_id;
-
-        // Start polling transcript history in the background to show progress in real-time
-        let active_id_poll = active_id_spawn.clone();
-        let mut msg_list_poll = messages;
-        let loading_poll = is_loading;
-        let sent_text = text.clone();
-        
-        spawn(async move {
-            sleep_ms(1000).await;
-
-            while loading_poll.read().get(&active_id_poll).copied().unwrap_or(false) {
-                if let Ok(mut history) = crate::get_chat_history(active_id_poll.clone()).await {
-                    if !history.is_empty() {
-                        let contains_sent = history.iter().any(|m| m.is_user && m.text == sent_text);
-                        if !contains_sent {
-                            history.push(ChatMessage {
-                                is_user: true,
-                                text: sent_text.clone(),
-                                timestamp: chrono::Local::now().format("%H:%M").to_string(),
-                            });
-                        }
-                        msg_list_poll.write().insert(active_id_poll.clone(), history);
-                    }
-                }
-                
-                sleep_ms(1500).await;
-            }
-        });
 
         spawn(async move {
             msg_list.write().entry(active_id_spawn.clone()).or_default().push(ChatMessage {
@@ -434,7 +406,7 @@ pub fn ChatTab(
             loading.write().insert(active_id_spawn.clone(), true);
 
             let mut final_id = active_id_spawn.clone();
-            match crate::send_chat_message(active_id_spawn.clone(), text).await {
+            match crate::send_chat_message(active_id_spawn.clone(), text.clone()).await {
                 Ok(response) => {
                     final_id = response.actual_session_id.clone();
                     
@@ -451,24 +423,60 @@ pub fn ChatTab(
                         active_session_id_ref.set(Some(response.actual_session_id.clone()));
                     }
 
-                    // Fetch final complete history from backend
-                    if let Ok(history) = crate::get_chat_history(final_id.clone()).await {
-                        msg_list.write().insert(final_id.clone(), history);
-                    } else {
-                        // Fallback
-                        msg_list.write().entry(final_id.clone()).or_default().push(ChatMessage {
-                            is_user: false,
-                            text: response.reply,
-                            timestamp: chrono::Local::now().format("%H:%M").to_string(),
-                        });
-                    }
+                    // Poll busy status in background until done
+                    let poll_id = final_id.clone();
+                    let sent_text = text.clone();
+                    let mut loading_sig = loading;
+                    let mut msg_list_sig = msg_list;
+                    let mut chat_sessions_sig = chat_sessions_sig;
+                    let mut issues_sig = issues_sig;
                     
-                    if let Ok(sessions) = crate::get_chat_sessions().await {
-                        chat_sessions_sig.set(sessions);
-                    }
-                    if let Ok(latest_issues) = crate::get_issues().await {
-                        issues_sig.set(latest_issues);
-                    }
+                    spawn(async move {
+                        // Sleep a bit to let the backend mark it busy
+                        sleep_ms(800).await;
+                        
+                        let mut is_busy = true;
+                        while is_busy {
+                            if let Ok(mut history) = crate::get_chat_history(poll_id.clone()).await {
+                                if !history.is_empty() {
+                                    let contains_sent = history.iter().any(|m| m.is_user && m.text == sent_text);
+                                    if !contains_sent {
+                                        history.push(ChatMessage {
+                                            is_user: true,
+                                            text: sent_text.clone(),
+                                            timestamp: chrono::Local::now().format("%H:%M").to_string(),
+                                        });
+                                    }
+                                    msg_list_sig.write().insert(poll_id.clone(), history);
+                                }
+                            }
+                            
+                            match crate::is_chat_session_busy(poll_id.clone()).await {
+                                Ok(busy) => {
+                                    is_busy = busy;
+                                }
+                                Err(_) => {
+                                    is_busy = false;
+                                }
+                            }
+                            sleep_ms(1500).await;
+                        }
+                        
+                        // Final history fetch and signals update
+                        if let Ok(history) = crate::get_chat_history(poll_id.clone()).await {
+                            msg_list_sig.write().insert(poll_id.clone(), history);
+                        }
+                        
+                        if let Ok(sessions) = crate::get_chat_sessions().await {
+                            chat_sessions_sig.set(sessions);
+                        }
+                        if let Ok(latest_issues) = crate::get_issues().await {
+                            issues_sig.set(latest_issues);
+                        }
+                        
+                        loading_sig.write().insert(poll_id.clone(), false);
+                        loading_sig.write().insert(active_id_spawn.clone(), false);
+                    });
                 }
                 Err(e) => {
                     msg_list.write().entry(active_id_spawn.clone()).or_default().push(ChatMessage {
@@ -476,10 +484,10 @@ pub fn ChatTab(
                         text: format!("⚠️ Error: {}", e),
                         timestamp: chrono::Local::now().format("%H:%M").to_string(),
                     });
+                    loading.write().insert(active_id_spawn.clone(), false);
+                    loading.write().insert(final_id, false);
                 }
             }
-            loading.write().insert(active_id_spawn.clone(), false);
-            loading.write().insert(final_id, false);
         });
     };
 

@@ -463,6 +463,23 @@ pub async fn get_chat_history(session_id: String) -> Result<Vec<ChatMessage>, Se
 }
 
 #[server]
+pub async fn is_chat_session_busy(session_id: String) -> Result<bool, ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let resolved_id = resolve_draft_id(&session_id);
+        if resolved_id.is_empty() || resolved_id.starts_with("draft-") {
+            return Ok(false);
+        }
+        Ok(backend::agy_runner::is_session_busy(&resolved_id))
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
+}
+
+
+#[server]
 pub async fn get_chat_sessions() -> Result<Vec<ChatSession>, ServerFnError> {
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -904,64 +921,88 @@ Failure to follow this will cause sandbox permission validation to time out and 
         backend::agy_runner::get_or_create_persistent_session(&actual_session_id)
             .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-        // 2. Send the message and wait for it to complete
-        let brain_dir = backend::vault::get_brain_dir().join(&actual_session_id);
-        let log_file_path = brain_dir.join(".system_generated/logs/agy_stdout.log");
-        backend::agy_runner::send_interactive_message(&actual_session_id, &prompt_payload, Some(&log_file_path))
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        // 2. Mark the session as busy
+        backend::agy_runner::set_session_busy(&actual_session_id, true);
 
+        // 3. Spawn background thread to run agy execution and auto-approve permissions
         let final_session_id = actual_session_id.clone();
+        let prompt_payload_clone = prompt_payload.clone();
+        let msg_trimmed_clone = msg_trimmed.to_string();
+        let session_id_clone = session_id.clone();
 
-        // Cleanup draft mapping on return
-        remove_draft_mapping(&session_id);
+        tokio::spawn(async move {
+            let brain_dir = backend::vault::get_brain_dir().join(&final_session_id);
+            let log_file_path = brain_dir.join(".system_generated/logs/agy_stdout.log");
 
-        // agy_runner 실행 완료 — transcript에서 응답 추출
-        let _ = check_and_rename_session(&final_session_id, msg_trimmed);
+            let res = backend::agy_runner::send_interactive_message(&final_session_id, &prompt_payload_clone, Some(&log_file_path));
 
-        match get_transcript_content_by_id(&final_session_id) {
-            Ok(clean_reply) => {
-                let mut final_response = clean_reply;
+            // Clear busy flag
+            backend::agy_runner::set_session_busy(&final_session_id, false);
 
-                if let Some(start_idx) = final_response.find("[CREATE_TASK:") {
-                    if let Some(end_idx) = final_response[start_idx..].find(']') {
-                        let full_tag = &final_response[start_idx..start_idx + end_idx + 1];
-                        let content = &final_response[start_idx + "[CREATE_TASK:".len()..start_idx + end_idx];
+            // Session promotion migration and renaming
+            remove_draft_mapping(&session_id_clone);
+            let _ = check_and_rename_session(&final_session_id, &msg_trimmed_clone);
 
-                        let parts: Vec<&str> = content.split('|').collect();
-                        let title = parts.first().unwrap_or(&"").trim().to_string();
-                        let body = parts.get(1).unwrap_or(&"").trim().to_string();
+            if let Err(e) = res {
+                log_notification(&format!("ERROR running agy in background: {}", e));
+            } else {
+                // Post-process response to handle any [CREATE_TASK: ...] tags
+                if let Ok(clean_reply) = get_transcript_content_by_id(&final_session_id) {
+                    if let Some(start_idx) = clean_reply.find("[CREATE_TASK:") {
+                        if let Some(end_idx) = clean_reply[start_idx..].find(']') {
+                            let full_tag = &clean_reply[start_idx..start_idx + end_idx + 1];
+                            let content = &clean_reply[start_idx + "[CREATE_TASK:".len()..start_idx + end_idx];
+                            let parts: Vec<&str> = content.split('|').collect();
+                            let title = parts.first().unwrap_or(&"").trim().to_string();
+                            let body = parts.get(1).unwrap_or(&"").trim().to_string();
 
-                        if !title.is_empty() {
-                            let mut issues = backend::issue::load_issues();
-                            let next_id = issues.iter().map(|i| i.id).max().unwrap_or(0) + 1;
-                            issues.push(Issue {
-                                id: next_id,
-                                title: title.clone(),
-                                body: if body.is_empty() { format!("Automatically created via chat: {}", title) } else { body },
-                                status: "open".to_string(),
-                                created_at: chrono::Local::now().to_rfc3339(),
-                                resolved_at: None,
-                            });
-                            let _ = backend::issue::save_issues(&issues);
+                            if !title.is_empty() {
+                                let mut issues = backend::issue::load_issues();
+                                let next_id = issues.iter().map(|i| i.id).max().unwrap_or(0) + 1;
+                                issues.push(Issue {
+                                    id: next_id,
+                                    title: title.clone(),
+                                    body: if body.is_empty() { format!("Automatically created via chat: {}", title) } else { body },
+                                    status: "open".to_string(),
+                                    created_at: chrono::Local::now().to_rfc3339(),
+                                    resolved_at: None,
+                                });
+                                let _ = backend::issue::save_issues(&issues);
 
-                            final_response = final_response.replace(full_tag, "").trim().to_string();
-                            final_response.push_str(&format!("\n\n*(Created task: **{}** [#{}])*", title, next_id));
+                                let mut updated_reply = clean_reply.replace(full_tag, "").trim().to_string();
+                                updated_reply.push_str(&format!("\n\n*(Created task: **{}** [#{}])*", title, next_id));
+                                
+                                // Rewrite the transcript response line to update it with the formatted task text
+                                let transcript_path = backend::vault::get_brain_dir()
+                                    .join(&final_session_id)
+                                    .join(".system_generated/logs/transcript_full.jsonl");
+                                if let Ok(file_content) = std::fs::read_to_string(&transcript_path) {
+                                    let mut lines: Vec<String> = file_content.lines().map(|l| l.to_string()).collect();
+                                    for line in lines.iter_mut().rev() {
+                                        if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(line) {
+                                            if json["source"] == "MODEL" && json["type"] == "PLANNER_RESPONSE" {
+                                                json["content"] = serde_json::json!(updated_reply);
+                                                if let Ok(new_line) = serde_json::to_string(&json) {
+                                                    *line = new_line;
+                                                }
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    let _ = std::fs::write(&transcript_path, lines.join("\n") + "\n");
+                                }
+                            }
                         }
                     }
                 }
+            }
+        });
 
-                Ok(ChatResponse {
-                    reply: final_response,
-                    actual_session_id: final_session_id,
-                })
-            }
-            Err(e) => {
-                Ok(ChatResponse {
-                    reply: format!("Failed to retrieve agent response: {}", e),
-                    actual_session_id: final_session_id,
-                })
-            }
-        }
+        // 4. Return immediately to the frontend to prevent HTTP timeout
+        Ok(ChatResponse {
+            reply: "".to_string(),
+            actual_session_id: actual_session_id,
+        })
     }
     #[cfg(target_arch = "wasm32")]
     {
