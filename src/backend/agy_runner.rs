@@ -488,7 +488,7 @@ pub fn get_or_create_persistent_session(conversation_id: &str) -> io::Result<u32
         }
         cmd.arg("--conversation");
         cmd.arg(conversation_id);
-        cmd.env("TERM", "xterm-256color");
+        cmd.env("TERM", "dumb");
         
         let mut session = rexpect::session::spawn_command(cmd, Some(30000))
             .map_err(|e| io::Error::other(e.to_string()))?;
