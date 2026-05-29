@@ -70,6 +70,11 @@ pub fn restart_dashboard_process(current_exe: &Path) -> io::Result<()> {
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
 
+    println!("Cleaning up residual agy conversation processes...");
+    let _ = Command::new("pkill")
+        .arg("-f")
+        .arg("agy --conversation")
+        .status();
 
     println!("Starting upgraded dashboard on port {}...", port);
     let mut cmd = Command::new(current_exe);
