@@ -583,9 +583,11 @@ async fn trigger_remote_upgrade(download_url: String) -> Result<(), ServerFnErro
             // Use sh -c to sleep for 2 seconds before launching the new dashboard,
             // allowing this current process to fully exit and release port 8080.
             let mut cmd = std::process::Command::new("sh");
+            if let Some(parent) = spawn_exe.parent() {
+                cmd.current_dir(parent);
+            }
             cmd.arg("-c").arg(format!(
-                "sleep 2 && {} dashboard --port {}",
-                spawn_exe.to_string_lossy(),
+                "sleep 2 && ./agy-orchestrator dashboard --port {}",
                 port
             ));
                 

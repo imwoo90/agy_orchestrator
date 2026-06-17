@@ -69,6 +69,9 @@ pub fn restart_dashboard_process(current_exe: &Path) -> io::Result<()> {
 
     println!("Starting upgraded dashboard on port {}...", port);
     let mut cmd = Command::new(current_exe);
+    if let Some(parent) = current_exe.parent() {
+        cmd.current_dir(parent);
+    }
     cmd.arg("dashboard").arg("--port").arg(port.to_string());
     cmd.env_remove("PORT")
         .env_remove("ADDR")
