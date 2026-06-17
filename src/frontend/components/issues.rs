@@ -9,6 +9,16 @@ pub fn IssuesTab(issues: Signal<Vec<Issue>>) -> Element {
     let mut new_body = use_signal(String::new);
     let mut error_msg = use_signal(String::new);
 
+    // Sync issues status from backend in real-time every 3 seconds to catch background harness completion
+    use_future(move || async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            if let Ok(latest_issues) = crate::get_issues().await {
+                issues.set(latest_issues);
+            }
+        }
+    });
+
     let issues_list = issues.read();
 
     // Group issues by status
