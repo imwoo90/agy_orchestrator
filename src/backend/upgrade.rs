@@ -192,26 +192,34 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
     }
     println!("Tests passed successfully!");
 
-    let current_exe = get_active_current_exe()?;
-    let backup_exe = current_exe.with_extension("bak");
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/wimvm".to_string());
+    let target_exe = PathBuf::from(home).join(".local/bin/agy-orchestrator");
+
+    // Ensure target parent directory exists
+    if let Some(parent) = target_exe.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let target_public = target_exe.parent().unwrap().join("public");
+    let backup_exe = target_exe.with_extension("bak");
+    let backup_public = target_exe.parent().unwrap().join("public.bak");
+
     let new_exe = workspace_root.join("target/dx/agy-orchestrator/release/web/server");
     let new_public = workspace_root.join("target/dx/agy-orchestrator/release/web/public");
 
-    let parent_dir = current_exe.parent().ok_or_else(|| io::Error::other("No parent directory for binary"))?;
-    let active_public = parent_dir.join("public");
-    let backup_public = parent_dir.join("public.bak");
-
     println!("Backing up active binary and assets...");
-    if backup_exe.exists() {
-        fs::remove_file(&backup_exe)?;
+    if target_exe.exists() {
+        if backup_exe.exists() {
+            fs::remove_file(&backup_exe)?;
+        }
+        fs::copy(&target_exe, &backup_exe)?;
     }
-    fs::copy(&current_exe, &backup_exe)?;
 
-    if active_public.exists() {
+    if target_public.exists() {
         if backup_public.exists() {
             fs::remove_dir_all(&backup_public)?;
         }
-        let _ = fs::rename(&active_public, &backup_public);
+        let _ = fs::rename(&target_public, &backup_public);
     }
 
     println!("Compiling release binary and assets via 'dx build --release'...");
@@ -222,9 +230,11 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
         .status()?;
 
     if !build_status.success() {
-        let _ = fs::remove_file(&backup_exe);
+        if backup_exe.exists() && target_exe.exists() {
+            let _ = fs::remove_file(&backup_exe);
+        }
         if backup_public.exists() {
-            let _ = fs::rename(&backup_public, &active_public);
+            let _ = fs::rename(&backup_public, &target_public);
         }
         if let Some(issue_id) = resolve_issue {
             let mut issues = load_issues();
@@ -241,22 +251,28 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
     }
     println!("Compilation completed successfully!");
 
-    if current_exe != new_exe {
-        println!("Installing upgraded binary and assets...");
-        let old_exe = current_exe.with_extension("old");
+    if target_exe != new_exe {
+        println!("Installing upgraded binary...");
+        let old_exe = target_exe.with_extension("old");
         if old_exe.exists() {
             fs::remove_file(&old_exe)?;
         }
-        let _ = fs::rename(&current_exe, &old_exe);
-        if let Err(e) = fs::copy(&new_exe, &current_exe) {
+        if target_exe.exists() {
+            let _ = fs::rename(&target_exe, &old_exe);
+        }
+        if let Err(e) = fs::copy(&new_exe, &target_exe) {
             eprintln!("Failed to copy upgraded binary: {}", e);
             println!("Restoring stable backup...");
-            let _ = fs::rename(&old_exe, &current_exe);
-            if backup_public.exists() {
-                let _ = fs::remove_dir_all(&active_public);
-                let _ = fs::rename(&backup_public, &active_public);
+            if old_exe.exists() && target_exe.exists() {
+                let _ = fs::rename(&old_exe, &target_exe);
             }
-            let _ = fs::remove_file(&backup_exe);
+            if backup_public.exists() {
+                let _ = fs::remove_dir_all(&target_public);
+                let _ = fs::rename(&backup_public, &target_public);
+            }
+            if backup_exe.exists() {
+                let _ = fs::remove_file(&backup_exe);
+            }
             if let Some(issue_id) = resolve_issue {
                 let mut issues = load_issues();
                 if let Some(issue) = issues.iter_mut().find(|i| i.id == issue_id) {
@@ -268,25 +284,27 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
             }
             return Err(e);
         }
-
-        if new_public.exists() {
-            if active_public.exists() {
-                let _ = fs::remove_dir_all(&active_public);
-            }
-            if let Err(e) = fs::create_dir_all(&active_public) {
-                eprintln!("Failed to create public directory: {}", e);
-            }
-            let copy_status = Command::new("cp")
-                .arg("-r")
-                .arg(format!("{}/.", new_public.to_string_lossy()))
-                .arg(&active_public)
-                .status();
-            if let Err(e) = copy_status {
-                eprintln!("Failed to copy public assets: {}", e);
-            }
+        if old_exe.exists() {
+            let _ = fs::remove_file(&old_exe);
         }
+    }
 
-        let _ = fs::remove_file(&old_exe);
+    println!("Installing upgraded assets...");
+    if new_public.exists() {
+        if target_public.exists() {
+            let _ = fs::remove_dir_all(&target_public);
+        }
+        if let Err(e) = fs::create_dir_all(&target_public) {
+            eprintln!("Failed to create public directory: {}", e);
+        }
+        let copy_status = Command::new("cp")
+            .arg("-r")
+            .arg(format!("{}/.", new_public.to_string_lossy()))
+            .arg(&target_public)
+            .status();
+        if let Err(e) = copy_status {
+            eprintln!("Failed to copy public assets: {}", e);
+        }
     }
 
     if backup_public.exists() {
@@ -298,8 +316,8 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
 
     let rollback_and_fail_issue = |reason: &str| -> io::Result<()> {
         if backup_public.exists() {
-            let _ = fs::remove_dir_all(&active_public);
-            let _ = fs::rename(&backup_public, &active_public);
+            let _ = fs::remove_dir_all(&target_public);
+            let _ = fs::rename(&backup_public, &target_public);
         }
         if let Some(issue_id) = resolve_issue {
             let mut issues = load_issues();
@@ -310,12 +328,12 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
             let _ = Command::new("git").arg("reset").arg("--hard").arg("HEAD").current_dir(&workspace_root).status();
             let _ = Command::new("git").arg("clean").arg("-fd").current_dir(&workspace_root).status();
         }
-        rollback_upgrade(&current_exe, &backup_exe, daemon_was_running, reason)
+        rollback_upgrade(&target_exe, &backup_exe, daemon_was_running, reason)
     };
 
     // Run basic sanity check on the new binary
     println!("Performing sanity checks on the new binary...");
-    let sanity_status = Command::new(&current_exe)
+    let sanity_status = Command::new(&target_exe)
         .arg("--help")
         .env_remove("PORT")
         .env_remove("ADDR")
@@ -347,7 +365,7 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
         }
 
         println!("Starting upgraded daemon...");
-        if let Err(e) = restart_daemon_process(&current_exe) {
+        if let Err(e) = restart_daemon_process(&target_exe) {
             return rollback_and_fail_issue(&format!("Failed to launch new daemon: {}", e));
         }
 
@@ -379,7 +397,7 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
             let _ = Command::new("git").arg("add").arg(".").current_dir(&workspace_root).status();
             let commit_msg = format!("Auto-evolution: Resolves Issue #{}: {}", issue_id, issue_title);
             let _ = Command::new("git").arg("commit").arg("-m").arg(&commit_msg).current_dir(&workspace_root).status();
-            
+
             if let Ok(output) = Command::new("git").arg("remote").current_dir(&workspace_root).output() {
                 let remote_str = String::from_utf8_lossy(&output.stdout);
                 if !remote_str.trim().is_empty() {
@@ -389,7 +407,7 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
         }
     }
 
-    let _ = restart_dashboard_process(&current_exe);
+    let _ = restart_dashboard_process(&target_exe);
     println!("Successfully upgraded to the new version!");
     Ok(())
 }
