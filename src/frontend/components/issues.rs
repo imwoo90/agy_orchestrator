@@ -19,7 +19,11 @@ pub fn IssuesTab(issues: Signal<Vec<Issue>>) -> Element {
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
             if let Ok(latest_issues) = crate::get_issues().await {
-                issues.set(latest_issues);
+                let current_issues = issues.read().clone();
+                // Avoid redundant re-renders by setting only when contents differ
+                if current_issues != latest_issues {
+                    issues.set(latest_issues);
+                }
             }
         }
     });
