@@ -156,30 +156,53 @@ pub fn IssuesTab(issues: Signal<Vec<Issue>>) -> Element {
                         }
                     }
                 }
-            }
-
-            // Issue Detail Modal
+            }            // Issue Detail Modal
             if let Some(issue) = selected_issue.read().clone() {
-                div { class: "fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in-30",
-                    div { class: "w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-6 flex flex-col gap-5 animate-in zoom-in-95 duration-200",
-                        // Header
-                        div { class: "flex items-start justify-between border-b border-slate-800 pb-3",
-                            div { class: "flex flex-col gap-1.5 flex-1 min-w-0",
-                                div { class: "flex items-center gap-2 flex-wrap",
-                                    span { class: "text-xs font-mono bg-slate-800 text-slate-400 px-2 py-0.5 rounded", "ID: #{issue.id}" }
+                div { class: "fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-200",
+                    div { 
+                        class: format!(
+                            "w-full max-w-3xl bg-gradient-to-b from-slate-900 to-slate-950 border-t-4 border-x border-b border-slate-800/80 rounded-2xl shadow-2xl p-6 md:p-7 flex flex-col gap-6 relative overflow-hidden animate-in zoom-in-95 duration-200 {}",
+                            match issue.status.as_str() {
+                                "open" => "border-t-amber-500",
+                                "in-progress" => "border-t-sky-500/80 animate-pulse",
+                                "resolved" => "border-t-emerald-500",
+                                "failed" => "border-t-rose-500",
+                                _ => "border-t-slate-750"
+                            }
+                        ),
+                        
+                        // Neon glow decoration inside the modal background
+                        div { class: "absolute -top-24 -left-24 w-56 h-56 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" }
+                        div { class: "absolute -bottom-24 -right-24 w-56 h-56 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" }
+
+                        // Header Block
+                        div { 
+                            class: format!(
+                                "flex items-start justify-between border-b border-slate-800/60 pb-5 px-1 relative z-10 rounded-t-xl {}",
+                                match issue.status.as_str() {
+                                    "open" => "bg-amber-500/5",
+                                    "in-progress" => "bg-sky-500/5",
+                                    "resolved" => "bg-emerald-500/5",
+                                    "failed" => "bg-rose-500/5",
+                                    _ => "bg-slate-800/20"
+                                }
+                            ),
+                            div { class: "flex flex-col gap-2.5 flex-1 min-w-0",
+                                div { class: "flex items-center gap-2.5 flex-wrap",
+                                    span { class: "text-[10px] font-mono font-bold bg-slate-850 text-slate-400 border border-slate-800 px-2 py-0.5 rounded-md", "ID: #{issue.id}" }
                                     // Status Badge
                                     match issue.status.as_str() {
-                                        "open" => rsx! { span { class: "text-[10px] font-bold px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20", "OPEN" } },
-                                        "in-progress" => rsx! { span { class: "text-[10px] font-bold px-2 py-0.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20 animate-pulse", "IN PROGRESS" } },
-                                        "resolved" => rsx! { span { class: "text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20", "RESOLVED" } },
-                                        "failed" => rsx! { span { class: "text-[10px] font-bold px-2 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20", "FAILED" } },
-                                        _ => rsx! { span { class: "text-[10px] font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-400", "UNKNOWN" } }
+                                        "open" => rsx! { span { class: "text-[9px] font-extrabold tracking-wider px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-450 border border-amber-500/25", "OPEN" } },
+                                        "in-progress" => rsx! { span { class: "text-[9px] font-extrabold tracking-wider px-2 py-0.5 rounded-md bg-sky-500/10 text-sky-400 border border-sky-500/25 animate-pulse", "IN PROGRESS" } },
+                                        "resolved" => rsx! { span { class: "text-[9px] font-extrabold tracking-wider px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/25", "RESOLVED" } },
+                                        "failed" => rsx! { span { class: "text-[9px] font-extrabold tracking-wider px-2 py-0.5 rounded-md bg-rose-500/10 text-rose-455 border border-rose-500/25", "FAILED" } },
+                                        _ => rsx! { span { class: "text-[9px] font-extrabold tracking-wider px-2 py-0.5 rounded-md bg-slate-800 text-slate-400", "UNKNOWN" } }
                                     }
                                 }
-                                h3 { class: "text-lg font-bold text-slate-100 mt-1 leading-snug break-words", "{issue.title}" }
+                                h3 { class: "text-xl font-bold text-slate-100 mt-1 leading-snug break-words tracking-tight", "{issue.title}" }
                             }
                             button {
-                                class: "text-slate-400 hover:text-slate-200 transition-colors text-lg p-1 shrink-0 cursor-pointer ml-3",
+                                class: "text-slate-400 hover:text-rose-400 hover:rotate-90 transition-all duration-300 text-xl p-1.5 shrink-0 cursor-pointer ml-3 bg-slate-850 hover:bg-rose-950/20 border border-slate-800 hover:border-rose-900/30 rounded-lg",
                                 onclick: move |_| {
                                     selected_issue.set(None);
                                 },
@@ -187,35 +210,111 @@ pub fn IssuesTab(issues: Signal<Vec<Issue>>) -> Element {
                             }
                         }
 
-                        // Content Body
-                        div { class: "flex-1 overflow-y-auto max-h-[350px] pr-1.5 scrollbar-thin scrollbar-thumb-slate-800",
-                            div { class: "bg-slate-950/50 border border-slate-850/80 rounded-xl p-4.5 min-h-[120px] whitespace-pre-wrap text-sm text-slate-300 leading-relaxed font-sans",
-                                "{issue.body}"
-                            }
-                        }
-
-                        // Dates Footer
-                        div { class: "flex flex-col gap-2.5 text-xs text-slate-450 border-t border-slate-800/60 pt-4",
-                            div { class: "flex justify-between items-center",
-                                span { "Created At" }
-                                span { class: "font-semibold text-slate-300", "{issue.created_at}" }
-                            }
-                            if let Some(ref res_at) = issue.resolved_at {
-                                div { class: "flex justify-between items-center",
-                                    span { "Resolved At" }
-                                    span { class: "font-semibold text-emerald-450", "{res_at}" }
+                        // Failed Warning Guideline Box
+                        if issue.status == "failed" {
+                            div { class: "bg-rose-500/5 border border-rose-500/20 rounded-xl p-4 flex gap-3 relative z-10 items-start shadow-sm",
+                                span { class: "text-lg shrink-0", "🚨" }
+                                div { class: "flex flex-col gap-1.5",
+                                    h4 { class: "text-xs font-bold text-rose-400 tracking-wide uppercase", "Evolution Integrity Harness Rejected This Code" }
+                                    p { class: "text-[12px] text-slate-400 leading-relaxed",
+                                        "The automated Self-Evolution agent encountered build failures (Clippy warnings/errors, failing unit tests, or Static Integrity Gate structures). To maintain project sanity, all uncommitted changes were safely rolled back. You can edit the code locally to fix the warnings/bugs, then click "
+                                        strong { class: "text-indigo-400 font-semibold", "Run Harness" }
+                                        " to re-verify and push changes automatically."
+                                    }
                                 }
                             }
                         }
 
-                        // Actions / Close
-                        div { class: "flex justify-end mt-2",
+                        // Grid Content Details
+                        div { class: "grid grid-cols-1 md:grid-cols-2 gap-5 relative z-10",
+                            // Left Details Box: Description
+                            div { class: "flex flex-col gap-2.5",
+                                label { class: "text-[10px] font-bold text-slate-500 uppercase tracking-wider", "Issue Description" }
+                                div { class: "bg-slate-950/70 border border-slate-850 rounded-xl p-4.5 min-h-[180px] max-h-[280px] overflow-y-auto whitespace-pre-wrap text-[13px] text-slate-300 leading-relaxed font-sans scrollbar-thin scrollbar-thumb-slate-800",
+                                    "{issue.body}"
+                                }
+                            }
+                            
+                            // Right Details Box: Metadata & Status Details
+                            div { class: "flex flex-col gap-4 justify-between",
+                                div { class: "flex flex-col gap-3",
+                                    label { class: "text-[10px] font-bold text-slate-500 uppercase tracking-wider", "System Metadata" }
+                                    
+                                    div { class: "flex flex-col gap-2 text-xs",
+                                        div { class: "flex justify-between items-center bg-slate-950/40 border border-slate-850/50 px-4 py-2.5 rounded-xl",
+                                            span { class: "text-slate-400 font-medium", "📅 Created At" }
+                                            span { class: "font-mono text-slate-200 font-semibold", "{issue.created_at}" }
+                                        }
+                                        if let Some(ref res_at) = issue.resolved_at {
+                                            div { class: "flex justify-between items-center bg-emerald-500/5 border border-emerald-500/10 px-4 py-2.5 rounded-xl",
+                                                span { class: "text-emerald-450 font-medium", "✅ Resolved At" }
+                                                span { class: "font-mono text-emerald-400 font-semibold", "{res_at}" }
+                                            }
+                                        } else {
+                                            div { class: "flex justify-between items-center bg-slate-950/20 border border-slate-850/30 px-4 py-2.5 rounded-xl text-slate-500",
+                                                span { "⏳ Resolution Status" }
+                                                span { class: "italic", "Pending verification" }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Interactive Quick Guide card inside metadata column
+                                div { class: "bg-slate-950/35 border border-slate-850/60 rounded-xl p-4 flex flex-col gap-1.5 text-xs text-slate-450 leading-relaxed",
+                                    h5 { class: "font-bold text-slate-350 text-[11px]", "💡 Harness System Mechanism" }
+                                    p { "When a task status transitions to active, the agent evolver will attempt static integrity gates (warnings-free Rust lints, successful cargo compile/tests) to commit code directly without manual git steps." }
+                                }
+                            }
+                        }
+
+                        // Actions Footer
+                        div { class: "flex flex-wrap items-center justify-between border-t border-slate-800/60 pt-5 gap-3 relative z-10",
                             button {
-                                class: "px-4 py-2 text-xs font-semibold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700/80 transition-all cursor-pointer active:scale-95",
+                                class: "px-5 py-2.5 text-xs font-semibold rounded-xl bg-slate-850 hover:bg-slate-800 text-slate-300 border border-slate-800 hover:border-slate-750 transition-all cursor-pointer active:scale-95 shadow-sm",
                                 onclick: move |_| {
                                     selected_issue.set(None);
                                 },
-                                "Close"
+                                "Close View"
+                            }
+
+                            // Run buttons inside modal if status permits actions
+                            if issue.status == "open" || issue.status == "failed" {
+                                div { class: "flex items-center gap-3.5",
+                                    button {
+                                        class: "px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white border border-indigo-550/40 text-xs font-bold active:scale-95 transition-all cursor-pointer shadow-lg shadow-indigo-900/30",
+                                        onclick: {
+                                            let id = issue.id;
+                                            move |_| {
+                                                selected_issue.set(None); // Close view during build to let them see Kanban
+                                                spawn(async move {
+                                                    if crate::run_evolution_harness_fn(id).await.is_ok() {
+                                                        if let Ok(i) = crate::get_issues().await {
+                                                            issues.set(i);
+                                                        }
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        "Run Harness ⚙️"
+                                    }
+                                    button {
+                                        class: "px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-550/40 text-xs font-bold active:scale-95 transition-all cursor-pointer shadow-lg shadow-emerald-900/30",
+                                        onclick: {
+                                            let id = issue.id;
+                                            move |_| {
+                                                selected_issue.set(None);
+                                                spawn(async move {
+                                                    if crate::resolve_issue_fn(id).await.is_ok() {
+                                                        if let Ok(i) = crate::get_issues().await {
+                                                            issues.set(i);
+                                                        }
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        "Resolve ✅"
+                                    }
+                                }
                             }
                         }
                     }
@@ -251,7 +350,7 @@ fn KanbanColumn(
                 } else {
                     for issue in issues.iter() {
                         div { 
-                            class: "bg-slate-900/60 border border-slate-850 hover:border-slate-755 rounded-xl p-4 flex flex-col gap-3 shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer active:scale-[0.99]",
+                            class: "bg-slate-900/60 border border-slate-850 hover:border-slate-750 rounded-xl p-4 flex flex-col gap-3 shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer active:scale-[0.99]",
                             onclick: {
                                 let issue_clone = issue.clone();
                                 move |_| {
