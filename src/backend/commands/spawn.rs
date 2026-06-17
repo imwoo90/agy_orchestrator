@@ -5,7 +5,7 @@ use std::process::{Command, Stdio};
 use chrono::Local;
 
 use crate::frontend::app::ProjectInfo;
-use crate::backend::vault::get_base_dir;
+use crate::backend::vault::{get_base_dir, prepare_command};
 use crate::backend::state::{load_state, save_state, check_project_status};
 use crate::backend::cli::CliResult;
 
@@ -244,6 +244,7 @@ pub fn execute(name: String, path: String, goal: String) -> io::Result<CliResult
         .stdout(Stdio::from(log_file.try_clone()?))
         .stderr(Stdio::from(log_file))
         .stdin(Stdio::null());
+    prepare_command(&mut cmd);
 
     #[cfg(unix)]
     {

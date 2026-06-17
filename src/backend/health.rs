@@ -4,7 +4,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use chrono::Local;
-use super::vault::get_base_dir;
+use super::vault::{get_base_dir, prepare_command};
 use super::state::load_state;
 use super::issue::{load_issues, save_issues};
 
@@ -83,12 +83,14 @@ pub fn run_health_checks() -> io::Result<Vec<HealthCheckResult>> {
         let (healthy, msg) = if running_paths.contains(&canonical_root) {
             (true, "skipped (workspace is active)".to_string())
         } else {
-            let check_status = Command::new("cargo")
+            let mut check_cmd = Command::new("cargo");
+            check_cmd
                 .arg("check")
                 .current_dir(&workspace_root)
                 .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
+                .stderr(Stdio::null());
+            prepare_command(&mut check_cmd);
+            let check_status = check_cmd.status();
 
             let res = match check_status {
                 Ok(s) if s.success() => (true, "cargo check passed".to_string()),
@@ -146,25 +148,29 @@ pub fn run_health_checks() -> io::Result<Vec<HealthCheckResult>> {
             cached_res.clone()
         } else {
             let res = if raw_project_path.join("Cargo.toml").exists() {
-                let check_status = Command::new("cargo")
+                let mut check_cmd = Command::new("cargo");
+                check_cmd
                     .arg("check")
                     .current_dir(raw_project_path)
                     .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status();
+                    .stderr(Stdio::null());
+                prepare_command(&mut check_cmd);
+                let check_status = check_cmd.status();
                 match check_status {
                     Ok(s) if s.success() => (true, "cargo check passed".to_string()),
                     Ok(s) => (false, format!("cargo check failed (exit code: {:?})", s.code())),
                     Err(e) => (false, format!("cargo check error: {}", e)),
                 }
             } else if raw_project_path.join("package.json").exists() {
-                let check_status = Command::new("npm")
+                let mut check_cmd = Command::new("npm");
+                check_cmd
                     .arg("test")
                     .arg("--if-present")
                     .current_dir(raw_project_path)
                     .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status();
+                    .stderr(Stdio::null());
+                prepare_command(&mut check_cmd);
+                let check_status = check_cmd.status();
                 match check_status {
                     Ok(s) if s.success() => (true, "npm test passed".to_string()),
                     Ok(s) => (false, format!("npm test failed (exit code: {:?})", s.code())),

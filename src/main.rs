@@ -870,6 +870,7 @@ async fn send_chat_message(session_id: String, message: String) -> Result<ChatRe
                 exec_cmd.env_remove("ADDR");
                 exec_cmd.env_remove("IP");
                 exec_cmd.env_remove("DIOXUS_ACTIVE");
+                backend::vault::prepare_command(&mut exec_cmd);
                 
                 if let Ok(cmd_out) = exec_cmd.output() {
                     let stdout_str = String::from_utf8_lossy(&cmd_out.stdout).to_string();
@@ -1039,6 +1040,7 @@ async fn send_chat_message(session_id: String, message: String) -> Result<ChatRe
             cmd.arg("--conversation").arg(&actual_session_id);
             cmd.arg("--continue");
         }
+        backend::vault::prepare_command(&mut cmd);
 
         let output = cmd.output();
 

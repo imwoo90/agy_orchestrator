@@ -111,3 +111,88 @@ pub fn bootstrap_if_needed() -> io::Result<()> {
 
     Ok(())
 }
+
+pub fn prepare_command(cmd: &mut std::process::Command) {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/wimvm".to_string());
+    let home_path = PathBuf::from(&home);
+    
+    // Start with the current PATH
+    let current_path = std::env::var_os("PATH").unwrap_or_default();
+    let mut paths: Vec<PathBuf> = std::env::split_paths(&current_path).collect();
+    
+    // Add cargo bin
+    let cargo_bin = home_path.join(".cargo/bin");
+    if cargo_bin.exists() && !paths.contains(&cargo_bin) {
+        paths.insert(0, cargo_bin);
+    }
+    
+    // Add local bin
+    let local_bin = home_path.join(".local/bin");
+    if local_bin.exists() && !paths.contains(&local_bin) {
+        paths.insert(0, local_bin);
+    }
+    
+    // Add NVM node bins dynamically
+    let nvm_node_dir = home_path.join(".nvm/versions/node");
+    if nvm_node_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&nvm_node_dir) {
+            for entry in entries.flatten() {
+                let bin_path = entry.path().join("bin");
+                if bin_path.exists() && !paths.contains(&bin_path) {
+                    paths.insert(0, bin_path);
+                }
+            }
+        }
+    }
+    
+    // Add standard paths if not present
+    let std_paths = vec![
+        PathBuf::from("/usr/local/bin"),
+        PathBuf::from("/usr/bin"),
+        PathBuf::from("/bin"),
+        PathBuf::from("/usr/local/sbin"),
+        PathBuf::from("/usr/sbin"),
+        PathBuf::from("/sbin"),
+    ];
+    for p in std_paths {
+        if p.exists() && !paths.contains(&p) {
+            paths.push(p);
+        }
+    }
+    
+    // Join back and set environment variable
+    if let Ok(new_path) = std::env::join_paths(paths) {
+        cmd.env("PATH", new_path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+
+    #[test]
+    fn test_prepare_command_adds_paths() {
+        let mut cmd = Command::new("dummy");
+        // Clear env to isolate test
+        cmd.env_clear();
+        
+        prepare_command(&mut cmd);
+        
+        let mut path_found = false;
+        for (key, val) in cmd.get_envs() {
+            if key == "PATH" {
+                path_found = true;
+                let val_str = val.unwrap().to_string_lossy();
+                assert!(!val_str.is_empty(), "PATH environment variable should not be empty");
+                
+                let home = std::env::var("HOME").unwrap_or_else(|_| "/home/wimvm".to_string());
+                let cargo_bin = format!("{}/.cargo/bin", home);
+                if std::path::Path::new(&cargo_bin).exists() {
+                    assert!(val_str.contains(&cargo_bin), "PATH should contain cargo bin path: {}", val_str);
+                }
+            }
+        }
+        assert!(path_found, "PATH environment variable should be set on the command");
+    }
+}

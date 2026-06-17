@@ -9,7 +9,7 @@ use chrono::Local;
 use super::issue::{load_issues, save_issues, close_github_issue};
 use super::daemon::{is_daemon_running, get_daemon_pid};
 use super::health::{find_workspace_root};
-use super::vault::get_base_dir;
+use super::vault::{get_base_dir, prepare_command};
 use std::path::PathBuf;
 
 pub fn get_active_current_exe() -> io::Result<PathBuf> {
@@ -177,10 +177,12 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
     println!("Found workspace root: {}", workspace_root.display());
 
     println!("Running tests via 'cargo test'...");
-    let test_status = Command::new("cargo")
+    let mut test_cmd = Command::new("cargo");
+    test_cmd
         .arg("test")
-        .current_dir(&workspace_root)
-        .status()?;
+        .current_dir(&workspace_root);
+    prepare_command(&mut test_cmd);
+    let test_status = test_cmd.status()?;
 
     if !test_status.success() {
         if let Some(issue_id) = resolve_issue {
@@ -229,11 +231,13 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
     }
 
     println!("Compiling release binary and assets via 'dx build --release'...");
-    let build_status = Command::new("dx")
+    let mut build_cmd = Command::new("dx");
+    build_cmd
         .arg("build")
         .arg("--release")
-        .current_dir(&workspace_root)
-        .status()?;
+        .current_dir(&workspace_root);
+    prepare_command(&mut build_cmd);
+    let build_status = build_cmd.status()?;
 
     if !build_status.success() {
         if backup_exe.exists() && target_exe.exists() {
@@ -733,14 +737,16 @@ pub fn run_evolution_harness(issue_id: u32) -> io::Result<()> {
 
     // 1. Run cargo clippy (Lint Gate)
     println!("Harness Step 1: Running cargo clippy --all-targets -- -D warnings...");
-    let clippy_status = Command::new("cargo")
+    let mut clippy_cmd = Command::new("cargo");
+    clippy_cmd
         .arg("clippy")
         .arg("--all-targets")
         .arg("--")
         .arg("-D")
         .arg("warnings")
-        .current_dir(&workspace_root)
-        .status()?;
+        .current_dir(&workspace_root);
+    prepare_command(&mut clippy_cmd);
+    let clippy_status = clippy_cmd.status()?;
 
     if !clippy_status.success() {
         return rollback_and_fail("Clippy warnings or compiler issues detected");
@@ -749,10 +755,12 @@ pub fn run_evolution_harness(issue_id: u32) -> io::Result<()> {
 
     // 2. Run cargo test (Test Gate)
     println!("Harness Step 2: Running cargo test...");
-    let test_status = Command::new("cargo")
+    let mut test_cmd = Command::new("cargo");
+    test_cmd
         .arg("test")
-        .current_dir(&workspace_root)
-        .status()?;
+        .current_dir(&workspace_root);
+    prepare_command(&mut test_cmd);
+    let test_status = test_cmd.status()?;
 
     if !test_status.success() {
         return rollback_and_fail("Unit tests failed");
