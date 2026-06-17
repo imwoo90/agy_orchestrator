@@ -162,7 +162,11 @@ pub fn prepare_command(cmd: &mut std::process::Command) {
     
     // Join back and set environment variable
     if let Ok(new_path) = std::env::join_paths(paths) {
-        cmd.env("PATH", new_path);
+        cmd.env("PATH", &new_path);
+        #[allow(unused_unsafe)]
+        unsafe {
+            std::env::set_var("PATH", &new_path);
+        }
     }
 }
 
@@ -194,5 +198,16 @@ mod tests {
             }
         }
         assert!(path_found, "PATH environment variable should be set on the command");
+    }
+
+    #[test]
+    fn test_prepare_command_resolves_relative_command() {
+        let mut cmd = Command::new("cargo");
+        cmd.arg("--version");
+        prepare_command(&mut cmd);
+
+        // Run the command to ensure it can successfully execute cargo without os error 2!
+        let status = cmd.status();
+        assert!(status.is_ok(), "Command should find and run cargo successfully: {:?}", status);
     }
 }
