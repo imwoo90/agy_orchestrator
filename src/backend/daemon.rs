@@ -314,7 +314,9 @@ pub fn run_daemon_loop() -> io::Result<()> {
                     let log_file_path = base_dir.join("logs").join(format!("{}.log", task_name));
                     
                     if let Ok(log_file) = File::create(&log_file_path) {
-                        let mut cmd = Command::new("agy");
+                        let home = std::env::var("HOME").unwrap_or_else(|_| "/home/wimvm".to_string());
+                        let agy_path = std::path::PathBuf::from(home).join(".local/bin/agy");
+                        let mut cmd = Command::new(agy_path);
                         cmd.arg("--add-dir")
                             .arg(&workspace_path_str)
                             .arg("--dangerously-skip-permissions")
