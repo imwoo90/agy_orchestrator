@@ -12,7 +12,12 @@ pub fn IssuesTab(issues: Signal<Vec<Issue>>) -> Element {
     // Sync issues status from backend in real-time every 3 seconds to catch background harness completion
     use_future(move || async move {
         loop {
+            #[cfg(target_arch = "wasm32")]
+            gloo_timers::future::TimeoutFuture::new(3000).await;
+            
+            #[cfg(not(target_arch = "wasm32"))]
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
             if let Ok(latest_issues) = crate::get_issues().await {
                 issues.set(latest_issues);
             }
