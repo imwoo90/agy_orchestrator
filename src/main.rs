@@ -1203,9 +1203,9 @@ static START_TIME: OnceLock<Instant> = OnceLock::new();
 
 // Entrypoint
 fn main() -> std::io::Result<()> {
-    START_TIME.get_or_init(Instant::now);
     #[cfg(not(target_arch = "wasm32"))]
     {
+        START_TIME.get_or_init(Instant::now);
         use clap::Parser;
         let cli_parsed = backend::cli::Cli::try_parse();
 
