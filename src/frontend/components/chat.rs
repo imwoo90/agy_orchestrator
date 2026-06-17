@@ -682,43 +682,7 @@ pub fn ChatTab(
                             }
                         }
 
-                        // Quick Actions Bar
-                        div { class: "px-6 py-3.5 bg-slate-900/30 border-t border-slate-850/80 flex flex-wrap gap-2.5 items-center backdrop-blur-sm shrink-0",
-                            span { class: "text-[9px] text-slate-450 uppercase tracking-widest font-bold mr-1.5", "JIT Commands" }
-                            
-                            button {
-                                class: "px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-850 hover:bg-indigo-950/40 hover:text-indigo-300 border border-slate-800 hover:border-indigo-800/50 transition-all duration-200 cursor-pointer flex items-center gap-1.5 active:scale-95 shadow-sm text-slate-300",
-                                onclick: move |_| {
-                                    send_custom_message("agy-orchestrator info".to_string());
-                                },
-                                span { "🗼" }
-                                span { "System Info" }
-                            }
-                            button {
-                                class: "px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-850 hover:bg-indigo-950/40 hover:text-indigo-300 border border-slate-800 hover:border-indigo-800/50 transition-all duration-200 cursor-pointer flex items-center gap-1.5 active:scale-95 shadow-sm text-slate-300",
-                                onclick: move |_| {
-                                    send_custom_message("agy-orchestrator list".to_string());
-                                },
-                                span { "📋" }
-                                span { "List Projects" }
-                            }
-                            button {
-                                class: "px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-850 hover:bg-indigo-950/40 hover:text-indigo-300 border border-slate-800 hover:border-indigo-800/50 transition-all duration-200 cursor-pointer flex items-center gap-1.5 active:scale-95 shadow-sm text-slate-300",
-                                onclick: move |_| {
-                                    send_custom_message("agy-orchestrator issue --list".to_string());
-                                },
-                                span { "🐛" }
-                                span { "Active Issues" }
-                            }
-                            button {
-                                class: "px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-850 hover:bg-indigo-950/40 hover:text-indigo-300 border border-slate-800 hover:border-indigo-800/50 transition-all duration-200 cursor-pointer flex items-center gap-1.5 active:scale-95 shadow-sm text-slate-300",
-                                onclick: move |_| {
-                                    input_text.set("create task: ".to_string());
-                                },
-                                span { "➕" }
-                                span { "Create Task" }
-                            }
-                        }
+
 
                         // Input Bar
                         div { class: "bg-slate-900/60 border-t border-slate-850/80 p-4.5 flex gap-3 items-center backdrop-blur-md shrink-0",
