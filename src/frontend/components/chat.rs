@@ -566,7 +566,6 @@ pub fn ChatTab(
                                 div { class: "min-w-0",
                                     h2 { class: "text-sm font-bold text-slate-100 flex items-center gap-2 truncate",
                                         "{current_session_title}"
-                                        span { class: "text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-300 font-semibold border border-indigo-500/20 shrink-0", "Hermes Mode" }
                                     }
                                     p { class: "text-[10px] text-slate-450 font-medium mt-0.5 truncate", "Active Room ID: {active_id}" }
                                 }
