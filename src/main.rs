@@ -6,7 +6,7 @@ pub mod backend;
 
 pub mod frontend;
 
-use frontend::app::{ProjectInfo, Issue, HealthCheckResult, FeedbackResponse};
+use frontend::app::{ProjectInfo, Issue, HealthCheckResult, FeedbackResponse, SystemInfo};
 
 // Server Functions
 #[server]
@@ -587,7 +587,104 @@ async fn trigger_remote_upgrade(download_url: String) -> Result<(), ServerFnErro
                 cmd.current_dir(parent);
             }
             cmd.arg("-c").arg(format!(
-                "sleep 2 && ./agy-orchestrator dashboard --port {}",
+                "sleep 2 && exec ./agy-orchestrator dashboard --port {}",
+                port
+            ));
+                
+                #[cfg(unix)]
+                {
+                    use std::os::unix::process::CommandExt;
+                    extern "C" {
+                        fn setsid() -> i32;
+                    }
+                    unsafe {
+                        cmd.pre_exec(|| {
+                            setsid();
+                            Ok(())
+                        });
+                    }
+                }
+                
+                let _ = cmd.spawn();
+            std::process::exit(0);
+        });
+        
+        Ok(())
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
+}
+
+#[server]
+async fn get_system_info() -> Result<SystemInfo, ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let binary_path = std::env::current_exe()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "unknown".to_string());
+        
+        let uptime_secs = START_TIME.get().map(|t| t.elapsed().as_secs()).unwrap_or(0);
+        
+        let dev_build_number = {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/home/wimvm".to_string());
+            let dev_num_file = std::path::PathBuf::from(home).join(".agy_orchestrator/dev_build_number");
+            if dev_num_file.exists() {
+                if let Ok(content) = std::fs::read_to_string(&dev_num_file) {
+                    let parts: Vec<&str> = content.trim().split(':').collect();
+                    if parts.len() == 2 {
+                        parts[1].parse::<u32>().unwrap_or(0)
+                    } else {
+                        content.trim().parse::<u32>().unwrap_or(0)
+                    }
+                } else {
+                    0
+                }
+            } else {
+                0
+            }
+        };
+        
+        Ok(SystemInfo {
+            binary_path,
+            uptime_secs,
+            dev_build_number,
+        })
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(ServerFnError::new("Only available on server"))
+    }
+}
+
+#[server]
+async fn trigger_local_upgrade() -> Result<(), ServerFnError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        backend::upgrade::run_self_upgrade(None).map_err(|e| ServerFnError::new(e.to_string()))?;
+        
+        tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/home/wimvm".to_string());
+            let stable_exe = std::path::PathBuf::from(home).join(".local/bin/agy-orchestrator");
+            let spawn_exe = if stable_exe.exists() {
+                stable_exe
+            } else if let Ok(curr) = std::env::current_exe() {
+                curr
+            } else {
+                std::process::exit(0);
+            };
+
+            let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
+            
+            let mut cmd = std::process::Command::new("sh");
+            if let Some(parent) = spawn_exe.parent() {
+                cmd.current_dir(parent);
+            }
+            cmd.arg("-c").arg(format!(
+                "sleep 2 && exec ./agy-orchestrator dashboard --port {}",
                 port
             ));
                 
@@ -1099,8 +1196,14 @@ fn get_transcript_content_by_id(conversation_id: &str) -> Result<String, String>
 }
 
 
+use std::sync::OnceLock;
+use std::time::Instant;
+
+static START_TIME: OnceLock<Instant> = OnceLock::new();
+
 // Entrypoint
 fn main() -> std::io::Result<()> {
+    START_TIME.get_or_init(Instant::now);
     #[cfg(not(target_arch = "wasm32"))]
     {
         use clap::Parser;

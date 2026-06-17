@@ -5,6 +5,13 @@ use serde::{Deserialize, Serialize};
 use crate::frontend::components::{ProjectsTab, IssuesTab, VaultTab, LogsTab, FeedbackModal, ChatTab};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct SystemInfo {
+    pub binary_path: String,
+    pub uptime_secs: u64,
+    pub dev_build_number: u32,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ProjectInfo {
     pub path: String,
     pub goal: String,
@@ -81,6 +88,22 @@ fn reload_page() {
     });
 }
 
+fn format_uptime(secs: u64) -> String {
+    let days = secs / 86400;
+    let hours = (secs % 86400) / 3600;
+    let minutes = (secs % 3600) / 60;
+    let seconds = secs % 60;
+    if days > 0 {
+        format!("{}d {}h {}m", days, hours, minutes)
+    } else if hours > 0 {
+        format!("{}h {}m {}s", hours, minutes, seconds)
+    } else if minutes > 0 {
+        format!("{}m {}s", minutes, seconds)
+    } else {
+        format!("{}s", seconds)
+    }
+}
+
 #[allow(non_snake_case)]
 pub fn App() -> Element {
     let mut active_tab = use_signal(|| "projects".to_string());
@@ -96,6 +119,7 @@ pub fn App() -> Element {
     let mut chat_messages = use_signal(HashMap::<String, Vec<ChatMessage>>::new);
     let mut active_session_id = use_signal(|| None::<String>);
     let mut chat_sessions = use_signal(Vec::<ChatSession>::new);
+    let mut system_info = use_signal(|| None::<SystemInfo>);
 
     // Load chat history once on mount
     let _chat_init = use_future(move || async move {
@@ -109,6 +133,9 @@ pub fn App() -> Element {
                 map.insert(active_id, history);
                 chat_messages.set(map);
             }
+        }
+        if let Ok(si) = crate::get_system_info().await {
+            system_info.set(Some(si));
         }
     });
 
@@ -136,12 +163,27 @@ pub fn App() -> Element {
             if let Ok(upg) = crate::get_upgrade_status().await {
                 upgrade_available.set(upg);
             }
+            if let Ok(si) = crate::get_system_info().await {
+                system_info.set(Some(si));
+            }
             sleep_ms(3000).await;
         }
     });
 
+    // Dynamically resolve tailwind asset path for local dev vs production release distributions
+    let tailwind_path = asset!("assets/tailwind.css").to_string();
+    let css_href = if tailwind_path.contains("tailwind-") {
+        if tailwind_path.starts_with('/') {
+            tailwind_path
+        } else {
+            format!("/{}", tailwind_path)
+        }
+    } else {
+        "/assets/tailwind.css".to_string()
+    };
+
     rsx! {
-        document::Link { rel: "stylesheet", href: asset!("assets/tailwind.css") }
+        document::Link { rel: "stylesheet", href: "{css_href}" }
         document::Link { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" }
 
         div { class: "bg-slate-950 text-slate-100 h-screen overflow-hidden font-sans flex flex-col selection:bg-indigo-500 selection:text-white",
@@ -153,7 +195,7 @@ pub fn App() -> Element {
                         "AGY Orchestrator Dashboard"
                     }
                     span { class: "text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded-md font-mono font-semibold",
-                        "v{env!(\"AGY_ORCHESTRATOR_VERSION\")}"
+                        "v{env!(\"AGY_ORCHESTRATOR_VERSION\")} ({env!(\"AGY_ORCHESTRATOR_COMMIT_HASH\")})"
                     }
                     if let Some((tag_name, download_url)) = upgrade_available.read().clone() {
                         button {
@@ -184,6 +226,47 @@ pub fn App() -> Element {
                     }
                 }
                 div { class: "flex items-center gap-4",
+                    if let Some(info) = system_info.read().as_ref() {
+                        div { class: "hidden lg:flex items-center gap-4 text-[11px] bg-slate-950/40 border border-slate-800/80 px-3.5 py-1.5 rounded-full text-slate-400 font-mono",
+                            div { class: "flex items-center gap-1.5",
+                                span { class: "text-slate-500", "Uptime:" }
+                                span { class: "text-slate-200 font-semibold", "{format_uptime(info.uptime_secs)}" }
+                            }
+                            div { class: "h-3 w-px bg-slate-800" }
+                            div { class: "flex items-center gap-1.5 max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap",
+                                span { class: "text-slate-500", "Path:" }
+                                span { class: "text-slate-200 font-semibold", title: "{info.binary_path}",
+                                    {
+                                        let path = std::path::Path::new(&info.binary_path);
+                                        path.file_name().and_then(|n| n.to_str()).unwrap_or(&info.binary_path)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    button {
+                        class: "px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-200 active:scale-95 border bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border-indigo-500/20 flex items-center gap-1.5 cursor-pointer",
+                        onclick: move |_| {
+                            let mut progress = upgrade_progress;
+                            spawn(async move {
+                                progress.set(UpgradeProgress::Installing);
+                                match crate::trigger_local_upgrade().await {
+                                    Ok(_) => {
+                                        progress.set(UpgradeProgress::Restarting);
+                                        sleep_ms(4000).await;
+                                        progress.set(UpgradeProgress::Success);
+                                        #[cfg(target_arch = "wasm32")]
+                                        reload_page();
+                                    }
+                                    Err(e) => {
+                                        progress.set(UpgradeProgress::Failed(e.to_string()));
+                                    }
+                                }
+                            });
+                        },
+                        span { "⚙️" }
+                        span { "Local Upgrade" }
+                    }
                     div { class: "flex items-center gap-2 bg-slate-950/60 border border-slate-800/80 px-3 py-1.5 rounded-full text-xs font-semibold",
                         span { class: "text-slate-400", "Daemon Status:" }
                         if *daemon_running.read() {

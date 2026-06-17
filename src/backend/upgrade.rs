@@ -38,6 +38,9 @@ pub fn restart_dashboard_process(current_exe: &Path) -> io::Result<()> {
                     let cmdline_path = path.join("cmdline");
                     if let Ok(cmdline) = std::fs::read_to_string(&cmdline_path) {
                         if cmdline.contains("agy-orchestrator") && cmdline.contains("dashboard") {
+                            if cmdline.contains("sh\0") || cmdline.contains("bash\0") || cmdline.contains("-c\0") {
+                                continue;
+                            }
                             if let Ok(pid) = name_str.parse::<u32>() {
                                 dashboard_pid = Some(pid);
                                 let parts: Vec<&str> = cmdline.split('\0').collect();

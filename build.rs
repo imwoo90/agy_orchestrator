@@ -33,7 +33,21 @@ fn main() {
         format!("{}-dev{}", version, count)
     };
     
+    let commit_hash = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .and_then(|output| {
+            if output.status.success() {
+                String::from_utf8(output.stdout).ok().map(|s| s.trim().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+
     println!("cargo:rustc-env=AGY_ORCHESTRATOR_VERSION={}", display_version);
+    println!("cargo:rustc-env=AGY_ORCHESTRATOR_COMMIT_HASH={}", commit_hash);
     println!("cargo:rerun-if-changed=Cargo.toml");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/");
