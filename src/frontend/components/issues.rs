@@ -4,6 +4,7 @@ use crate::frontend::app::Issue;
 #[component]
 pub fn IssuesTab(issues: Signal<Vec<Issue>>) -> Element {
     let mut show_create_modal = use_signal(|| false);
+    let mut selected_issue = use_signal(|| None::<Issue>);
     let mut new_title = use_signal(String::new);
     let mut new_body = use_signal(String::new);
     let mut error_msg = use_signal(String::new);
@@ -34,7 +35,7 @@ pub fn IssuesTab(issues: Signal<Vec<Issue>>) -> Element {
                     p { class: "text-sm text-slate-400 mt-1", "Track issues that the daemon will auto-heal and resolve." }
                 }
                 button {
-                    class: "px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold transition-all duration-200 shadow-lg shadow-indigo-900/40 active:scale-95 flex items-center gap-2",
+                    class: "px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold transition-all duration-200 shadow-lg shadow-indigo-900/40 active:scale-95 flex items-center gap-2 cursor-pointer",
                     onclick: move |_| show_create_modal.set(true),
                     span { class: "text-lg", "+" }
                     "New Issue"
@@ -48,28 +49,32 @@ pub fn IssuesTab(issues: Signal<Vec<Issue>>) -> Element {
                     header_bg: "bg-amber-500/10 border-amber-500/20 text-amber-400",
                     badge_bg: "bg-amber-500/10 text-amber-400",
                     issues: open_issues,
-                    issues_sig: issues
+                    issues_sig: issues,
+                    selected_issue: selected_issue
                 }
                 KanbanColumn {
                     title: "In Progress",
                     header_bg: "bg-sky-500/10 border-sky-500/20 text-sky-400",
                     badge_bg: "bg-sky-500/10 text-sky-400 animate-pulse",
                     issues: in_progress_issues,
-                    issues_sig: issues
+                    issues_sig: issues,
+                    selected_issue: selected_issue
                 }
                 KanbanColumn {
                     title: "Resolved",
                     header_bg: "bg-emerald-500/10 border-emerald-500/20 text-emerald-400",
                     badge_bg: "bg-emerald-500/10 text-emerald-400",
                     issues: resolved_issues,
-                    issues_sig: issues
+                    issues_sig: issues,
+                    selected_issue: selected_issue
                 }
                 KanbanColumn {
                     title: "Failed",
                     header_bg: "bg-rose-500/10 border-rose-500/20 text-rose-400",
                     badge_bg: "bg-rose-500/10 text-rose-400",
                     issues: failed_issues,
-                    issues_sig: issues
+                    issues_sig: issues,
+                    selected_issue: selected_issue
                 }
             }
 
@@ -80,7 +85,7 @@ pub fn IssuesTab(issues: Signal<Vec<Issue>>) -> Element {
                         div { class: "flex items-center justify-between border-b border-slate-800 pb-3",
                             h3 { class: "text-lg font-bold text-slate-100", "Submit Evolution Issue" }
                             button {
-                                class: "text-slate-400 hover:text-slate-200 transition-colors",
+                                class: "text-slate-400 hover:text-slate-200 transition-colors cursor-pointer",
                                 onclick: move |_| {
                                     show_create_modal.set(false);
                                     error_msg.set(String::new());
@@ -118,7 +123,7 @@ pub fn IssuesTab(issues: Signal<Vec<Issue>>) -> Element {
 
                         div { class: "flex justify-end gap-3 mt-4",
                             button {
-                                class: "px-4 py-2 text-sm font-semibold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700/80 transition-all",
+                                class: "px-4 py-2 text-sm font-semibold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700/80 transition-all cursor-pointer",
                                 onclick: move |_| {
                                     show_create_modal.set(false);
                                     error_msg.set(String::new());
@@ -126,7 +131,7 @@ pub fn IssuesTab(issues: Signal<Vec<Issue>>) -> Element {
                                 "Cancel"
                             }
                             button {
-                                class: "px-4 py-2 text-sm font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-900/30 transition-all",
+                                class: "px-4 py-2 text-sm font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-900/30 transition-all cursor-pointer",
                                 onclick: move |_| async move {
                                     if new_title.read().is_empty() {
                                         error_msg.set("Title is required.".to_string());
@@ -152,6 +157,70 @@ pub fn IssuesTab(issues: Signal<Vec<Issue>>) -> Element {
                     }
                 }
             }
+
+            // Issue Detail Modal
+            if let Some(issue) = selected_issue.read().clone() {
+                div { class: "fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in-30",
+                    div { class: "w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-6 flex flex-col gap-5 animate-in zoom-in-95 duration-200",
+                        // Header
+                        div { class: "flex items-start justify-between border-b border-slate-800 pb-3",
+                            div { class: "flex flex-col gap-1.5 flex-1 min-w-0",
+                                div { class: "flex items-center gap-2 flex-wrap",
+                                    span { class: "text-xs font-mono bg-slate-800 text-slate-400 px-2 py-0.5 rounded", "ID: #{issue.id}" }
+                                    // Status Badge
+                                    match issue.status.as_str() {
+                                        "open" => rsx! { span { class: "text-[10px] font-bold px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20", "OPEN" } },
+                                        "in-progress" => rsx! { span { class: "text-[10px] font-bold px-2 py-0.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20 animate-pulse", "IN PROGRESS" } },
+                                        "resolved" => rsx! { span { class: "text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20", "RESOLVED" } },
+                                        "failed" => rsx! { span { class: "text-[10px] font-bold px-2 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20", "FAILED" } },
+                                        _ => rsx! { span { class: "text-[10px] font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-400", "UNKNOWN" } }
+                                    }
+                                }
+                                h3 { class: "text-lg font-bold text-slate-100 mt-1 leading-snug break-words", "{issue.title}" }
+                            }
+                            button {
+                                class: "text-slate-400 hover:text-slate-200 transition-colors text-lg p-1 shrink-0 cursor-pointer ml-3",
+                                onclick: move |_| {
+                                    selected_issue.set(None);
+                                },
+                                "✕"
+                            }
+                        }
+
+                        // Content Body
+                        div { class: "flex-1 overflow-y-auto max-h-[350px] pr-1.5 scrollbar-thin scrollbar-thumb-slate-800",
+                            div { class: "bg-slate-950/50 border border-slate-850/80 rounded-xl p-4.5 min-h-[120px] whitespace-pre-wrap text-sm text-slate-300 leading-relaxed font-sans",
+                                "{issue.body}"
+                            }
+                        }
+
+                        // Dates Footer
+                        div { class: "flex flex-col gap-2.5 text-xs text-slate-450 border-t border-slate-800/60 pt-4",
+                            div { class: "flex justify-between items-center",
+                                span { "Created At" }
+                                span { class: "font-semibold text-slate-300", "{issue.created_at}" }
+                            }
+                            if let Some(ref res_at) = issue.resolved_at {
+                                div { class: "flex justify-between items-center",
+                                    span { "Resolved At" }
+                                    span { class: "font-semibold text-emerald-450", "{res_at}" }
+                                }
+                            }
+                        }
+
+                        // Actions / Close
+                        div { class: "flex justify-end mt-2",
+                            button {
+                                class: "px-4 py-2 text-xs font-semibold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700/80 transition-all cursor-pointer active:scale-95",
+                                onclick: move |_| {
+                                    selected_issue.set(None);
+                                },
+                                "Close"
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -162,7 +231,8 @@ fn KanbanColumn(
     header_bg: &'static str,
     badge_bg: &'static str,
     issues: Vec<Issue>,
-    issues_sig: Signal<Vec<Issue>>
+    issues_sig: Signal<Vec<Issue>>,
+    selected_issue: Signal<Option<Issue>>
 ) -> Element {
     rsx! {
         div { class: "bg-slate-900/30 border border-slate-850 rounded-2xl p-4 flex flex-col gap-4 h-full min-h-0",
@@ -180,7 +250,14 @@ fn KanbanColumn(
                     }
                 } else {
                     for issue in issues.iter() {
-                        div { class: "bg-slate-900/60 border border-slate-850 hover:border-slate-800/80 rounded-xl p-4 flex flex-col gap-3 shadow-sm hover:shadow-md transition-all duration-200",
+                        div { 
+                            class: "bg-slate-900/60 border border-slate-850 hover:border-slate-755 rounded-xl p-4 flex flex-col gap-3 shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer active:scale-[0.99]",
+                            onclick: {
+                                let issue_clone = issue.clone();
+                                move |_| {
+                                    selected_issue.set(Some(issue_clone.clone()));
+                                }
+                            },
                             div { class: "flex flex-col gap-1.5",
                                 h4 { class: "font-semibold text-slate-200 text-sm leading-snug", "{issue.title}" }
                                 p { class: "text-xs text-slate-400 line-clamp-2 leading-relaxed", "{issue.body}" }
@@ -191,7 +268,8 @@ fn KanbanColumn(
                                         class: "flex-1 py-1 rounded bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/20 text-[10px] font-bold active:scale-95 transition-all cursor-pointer text-center",
                                         onclick: {
                                             let id = issue.id;
-                                            move |_| {
+                                            move |evt| {
+                                                evt.stop_propagation(); // Prevent modal overlay when clicking buttons
                                                 spawn(async move {
                                                     if crate::run_evolution_harness_fn(id).await.is_ok() {
                                                         if let Ok(i) = crate::get_issues().await {
@@ -207,7 +285,8 @@ fn KanbanColumn(
                                         class: "flex-1 py-1 rounded bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold active:scale-95 transition-all cursor-pointer text-center",
                                         onclick: {
                                             let id = issue.id;
-                                            move |_| {
+                                            move |evt| {
+                                                evt.stop_propagation(); // Prevent modal overlay when clicking buttons
                                                 spawn(async move {
                                                     if crate::resolve_issue_fn(id).await.is_ok() {
                                                         if let Ok(i) = crate::get_issues().await {
