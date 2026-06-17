@@ -28,6 +28,14 @@ jobs:
       - name: Rust Cache
         uses: swatinem/rust-cache@v2
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Tailwind CSS
+        run: npm install -g tailwindcss
+
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@v1.6.4
 
