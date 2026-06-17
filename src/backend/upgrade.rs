@@ -311,6 +311,7 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
         if let Err(e) = copy_status {
             eprintln!("Failed to copy public assets: {}", e);
         }
+        let _ = ensure_tailwind_fallback_link(&target_public);
     }
 
     if backup_public.exists() {
@@ -594,6 +595,7 @@ pub fn run_remote_upgrade(download_url: &str) -> io::Result<()> {
         if let Err(e) = copy_status {
             eprintln!("Failed to copy public assets: {}", e);
         }
+        let _ = ensure_tailwind_fallback_link(&active_public);
     }
 
     let _ = fs::remove_file(&old_exe);
@@ -796,5 +798,26 @@ pub fn run_evolution_harness(issue_id: u32) -> io::Result<()> {
         ));
     }
 
+    Ok(())
+}
+
+fn ensure_tailwind_fallback_link(public_dir: &Path) -> io::Result<()> {
+    let assets_dir = public_dir.join("assets");
+    if assets_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&assets_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+                        if file_name.starts_with("tailwind-") && file_name.ends_with(".css") {
+                            let dest = assets_dir.join("tailwind.css");
+                            std::fs::copy(&path, &dest)?;
+                            println!("[Upgrade] Copied fallback css: {} -> {}", file_name, dest.display());
+                        }
+                    }
+                }
+            }
+        }
+    }
     Ok(())
 }
