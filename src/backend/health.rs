@@ -19,13 +19,29 @@ pub fn find_workspace_root() -> io::Result<PathBuf> {
     }
     
     // 2. Fallback: Try finding from current working directory
-    let mut current_working_dir = std::env::current_dir()?;
-    loop {
-        if current_working_dir.join("Cargo.toml").exists() {
-            return Ok(current_working_dir);
+    if let Ok(mut current_working_dir) = std::env::current_dir() {
+        loop {
+            if current_working_dir.join("Cargo.toml").exists() {
+                return Ok(current_working_dir);
+            }
+            if !current_working_dir.pop() {
+                break;
+            }
         }
-        if !current_working_dir.pop() {
-            break;
+    }
+
+    // 3. Fallback: Try finding from projects.json state
+    let projects = load_state();
+    if let Some(info) = projects.get("agy_orchestrator") {
+        let p = PathBuf::from(&info.path);
+        if p.join("Cargo.toml").exists() {
+            return Ok(p);
+        }
+    }
+    for info in projects.values() {
+        let p = PathBuf::from(&info.path);
+        if p.join("Cargo.toml").exists() {
+            return Ok(p);
         }
     }
 
