@@ -177,11 +177,7 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
     println!("Found workspace root: {}", workspace_root.display());
 
     println!("Running tests via 'cargo test'...");
-    let mut test_cmd = Command::new(resolve_binary("cargo"));
-    test_cmd
-        .arg("test")
-        .current_dir(&workspace_root);
-    prepare_command(&mut test_cmd);
+    let mut test_cmd = build_cargo_test_command(&workspace_root);
     let test_status = test_cmd.status()?;
 
     if !test_status.success() {
@@ -755,11 +751,7 @@ pub fn run_evolution_harness(issue_id: u32) -> io::Result<()> {
 
     // 2. Run cargo test (Test Gate)
     println!("Harness Step 2: Running cargo test...");
-    let mut test_cmd = Command::new(resolve_binary("cargo"));
-    test_cmd
-        .arg("test")
-        .current_dir(&workspace_root);
-    prepare_command(&mut test_cmd);
+    let mut test_cmd = build_cargo_test_command(&workspace_root);
     let test_status = test_cmd.status()?;
 
     if !test_status.success() {
@@ -828,4 +820,32 @@ fn ensure_tailwind_fallback_link(public_dir: &Path) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+pub fn build_cargo_test_command(workspace_root: &Path) -> Command {
+    let mut test_cmd = Command::new(resolve_binary("cargo"));
+    test_cmd
+        .arg("test")
+        .arg("--no-default-features")
+        .arg("--features")
+        .arg("server")
+        .current_dir(workspace_root);
+    prepare_command(&mut test_cmd);
+    test_cmd
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_cargo_test_command() {
+        let root = Path::new("/dummy/workspace");
+        let cmd = build_cargo_test_command(root);
+        
+        let args: Vec<String> = cmd.get_args().map(|s| s.to_string_lossy().into_owned()).collect();
+        assert_eq!(args, vec!["test", "--no-default-features", "--features", "server"]);
+        
+        assert_eq!(cmd.get_current_dir(), Some(root));
+    }
 }

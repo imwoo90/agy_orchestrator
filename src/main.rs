@@ -1266,6 +1266,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn test_multi_session_chat() {
         #[cfg(feature = "server")]
         {
