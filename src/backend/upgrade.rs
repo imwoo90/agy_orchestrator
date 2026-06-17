@@ -9,7 +9,7 @@ use chrono::Local;
 use super::issue::{load_issues, save_issues, close_github_issue};
 use super::daemon::{is_daemon_running, get_daemon_pid};
 use super::health::{find_workspace_root};
-use super::vault::{get_base_dir, prepare_command};
+use super::vault::{get_base_dir, prepare_command, resolve_binary};
 use std::path::PathBuf;
 
 pub fn get_active_current_exe() -> io::Result<PathBuf> {
@@ -177,7 +177,7 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
     println!("Found workspace root: {}", workspace_root.display());
 
     println!("Running tests via 'cargo test'...");
-    let mut test_cmd = Command::new("cargo");
+    let mut test_cmd = Command::new(resolve_binary("cargo"));
     test_cmd
         .arg("test")
         .current_dir(&workspace_root);
@@ -231,7 +231,7 @@ pub fn run_self_upgrade(resolve_issue: Option<u32>) -> io::Result<()> {
     }
 
     println!("Compiling release binary and assets via 'dx build --release'...");
-    let mut build_cmd = Command::new("dx");
+    let mut build_cmd = Command::new(resolve_binary("dx"));
     build_cmd
         .arg("build")
         .arg("--release")
@@ -737,7 +737,7 @@ pub fn run_evolution_harness(issue_id: u32) -> io::Result<()> {
 
     // 1. Run cargo clippy (Lint Gate)
     println!("Harness Step 1: Running cargo clippy --all-targets -- -D warnings...");
-    let mut clippy_cmd = Command::new("cargo");
+    let mut clippy_cmd = Command::new(resolve_binary("cargo"));
     clippy_cmd
         .arg("clippy")
         .arg("--all-targets")
@@ -755,7 +755,7 @@ pub fn run_evolution_harness(issue_id: u32) -> io::Result<()> {
 
     // 2. Run cargo test (Test Gate)
     println!("Harness Step 2: Running cargo test...");
-    let mut test_cmd = Command::new("cargo");
+    let mut test_cmd = Command::new(resolve_binary("cargo"));
     test_cmd
         .arg("test")
         .current_dir(&workspace_root);

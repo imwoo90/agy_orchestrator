@@ -170,6 +170,71 @@ pub fn prepare_command(cmd: &mut std::process::Command) {
     }
 }
 
+pub fn resolve_binary(name: &str) -> PathBuf {
+    let path = PathBuf::from(name);
+    if path.is_absolute() || name.contains('/') {
+        return path;
+    }
+
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/wimvm".to_string());
+    let home_path = PathBuf::from(&home);
+
+    // Start with the current PATH
+    let current_path = std::env::var_os("PATH").unwrap_or_default();
+    let mut paths: Vec<PathBuf> = std::env::split_paths(&current_path).collect();
+
+    // Add cargo bin
+    let cargo_bin = home_path.join(".cargo/bin");
+    if cargo_bin.exists() && !paths.contains(&cargo_bin) {
+        paths.insert(0, cargo_bin);
+    }
+
+    // Add local bin
+    let local_bin = home_path.join(".local/bin");
+    if local_bin.exists() && !paths.contains(&local_bin) {
+        paths.insert(0, local_bin);
+    }
+
+    // Add NVM node bins dynamically
+    let nvm_node_dir = home_path.join(".nvm/versions/node");
+    if nvm_node_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&nvm_node_dir) {
+            for entry in entries.flatten() {
+                let bin_path = entry.path().join("bin");
+                if bin_path.exists() && !paths.contains(&bin_path) {
+                    paths.insert(0, bin_path);
+                }
+            }
+        }
+    }
+
+    // Add standard paths if not present
+    let std_paths = vec![
+        PathBuf::from("/usr/local/bin"),
+        PathBuf::from("/usr/bin"),
+        PathBuf::from("/bin"),
+        PathBuf::from("/usr/local/sbin"),
+        PathBuf::from("/usr/sbin"),
+        PathBuf::from("/sbin"),
+    ];
+    for p in std_paths {
+        if p.exists() && !paths.contains(&p) {
+            paths.push(p);
+        }
+    }
+
+    // Search for binary in the paths
+    for p in paths {
+        let bin_path = p.join(name);
+        if bin_path.exists() {
+            return bin_path;
+        }
+    }
+
+    // Fallback to the relative name if not found
+    path
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,5 +274,11 @@ mod tests {
         // Run the command to ensure it can successfully execute cargo without os error 2!
         let status = cmd.status();
         assert!(status.is_ok(), "Command should find and run cargo successfully: {:?}", status);
+    }
+
+    #[test]
+    fn test_resolve_binary_finds_cargo() {
+        let cargo_path = resolve_binary("cargo");
+        assert!(cargo_path.exists(), "Resolved cargo binary path should exist: {:?}", cargo_path);
     }
 }

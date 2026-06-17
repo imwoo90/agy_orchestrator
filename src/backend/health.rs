@@ -4,7 +4,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use chrono::Local;
-use super::vault::{get_base_dir, prepare_command};
+use super::vault::{get_base_dir, prepare_command, resolve_binary};
 use super::state::load_state;
 use super::issue::{load_issues, save_issues};
 
@@ -83,7 +83,7 @@ pub fn run_health_checks() -> io::Result<Vec<HealthCheckResult>> {
         let (healthy, msg) = if running_paths.contains(&canonical_root) {
             (true, "skipped (workspace is active)".to_string())
         } else {
-            let mut check_cmd = Command::new("cargo");
+            let mut check_cmd = Command::new(resolve_binary("cargo"));
             check_cmd
                 .arg("check")
                 .current_dir(&workspace_root)
@@ -148,7 +148,7 @@ pub fn run_health_checks() -> io::Result<Vec<HealthCheckResult>> {
             cached_res.clone()
         } else {
             let res = if raw_project_path.join("Cargo.toml").exists() {
-                let mut check_cmd = Command::new("cargo");
+                let mut check_cmd = Command::new(resolve_binary("cargo"));
                 check_cmd
                     .arg("check")
                     .current_dir(raw_project_path)
@@ -162,7 +162,7 @@ pub fn run_health_checks() -> io::Result<Vec<HealthCheckResult>> {
                     Err(e) => (false, format!("cargo check error: {}", e)),
                 }
             } else if raw_project_path.join("package.json").exists() {
-                let mut check_cmd = Command::new("npm");
+                let mut check_cmd = Command::new(resolve_binary("npm"));
                 check_cmd
                     .arg("test")
                     .arg("--if-present")

@@ -2,7 +2,7 @@ use crate::frontend::app::{Issue, FeedbackResponse};
 use std::fs::File;
 use std::io;
 use serde::Deserialize;
-use super::vault::get_base_dir;
+use super::vault::{get_base_dir, prepare_command, resolve_binary};
 
 #[allow(dead_code)]
 #[derive(Deserialize, Debug)]
@@ -173,10 +173,11 @@ fn refine_feedback_via_agent(raw_text: &str) -> io::Result<(String, String)> {
         raw_text
     );
 
-    let mut cmd = std::process::Command::new("agy");
+    let mut cmd = std::process::Command::new(resolve_binary("agy"));
     cmd.arg("--dangerously-skip-permissions")
        .arg("--print")
        .arg(&prompt);
+    prepare_command(&mut cmd);
 
     let output = cmd.output()?;
     if !output.status.success() {
