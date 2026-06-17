@@ -579,8 +579,15 @@ async fn trigger_remote_upgrade(download_url: String) -> Result<(), ServerFnErro
             };
 
             let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
-            let mut cmd = std::process::Command::new(&spawn_exe);
-            cmd.arg("dashboard").arg("--port").arg(&port);
+            
+            // Use sh -c to sleep for 2 seconds before launching the new dashboard,
+            // allowing this current process to fully exit and release port 8080.
+            let mut cmd = std::process::Command::new("sh");
+            cmd.arg("-c").arg(format!(
+                "sleep 2 && {} dashboard --port {}",
+                spawn_exe.to_string_lossy(),
+                port
+            ));
                 
                 #[cfg(unix)]
                 {
